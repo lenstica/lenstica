@@ -270,16 +270,9 @@ the file, the variable and the kind of credential.
 
 ## Roadmap
 
-Lenstica is free for individual developers: every lens, the menu bar app,
-the CLI, the AI-agent integrations and your own lenses. Next up are signed
-releases, installing lenses other people publish, and new lenses for
-containers, CI workflows, and editor and browser extensions.
-
-A team edition is planned for organisations that need the same rules on every
-developer's machine: central policy, a dashboard, audit logs, SSO and managed
-rollout. It will be the same binary unlocked by a licence key, and it will
-never remove anything from the free edition. The full plan is in
-[SPEC.md](SPEC.md#8-roadmap-and-backlog).
+Next up are signed releases, installing lenses other people publish, and new
+lenses for containers, CI workflows, and editor and browser extensions. The
+full plan is in [SPEC.md](SPEC.md#8-roadmap-and-backlog).
 
 ## Contributing
 
@@ -323,8 +316,7 @@ core, the `lenstica-lens` API crate and the built-in lenses, so anyone can use
 Lenstica, including at work, and build lenses on it. See [NOTICE](NOTICE).
 
 Lenses run as `[[external]]` tools are separate programs with their own
-licences. The planned team edition will be a separate, proprietary add-on;
-the open-source core does not depend on it and never will.
+licences.
 
 ## Acknowledgements
 

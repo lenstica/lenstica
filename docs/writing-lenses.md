@@ -8,8 +8,8 @@ MCP server with no UI changes.
 - [Your own CLI](#your-own-cli)
 - [A Rust crate](#a-rust-crate)
 
-Installing lenses other people publish (`lenstica lens install`, a lens
-registry, premium lenses) is planned: see
+Installing lenses other people publish (`lenstica lens install` and a lens
+registry) is planned: see
 [SPEC.md](../SPEC.md#f-10-lens-installation) for the design.
 
 ## An external tool

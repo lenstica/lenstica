@@ -1,6 +1,7 @@
 //! The tray icon and its menu, built from findings alone, so any lens
 //! (built-in, plugin crate or external tool) shows up without changes here.
 
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -12,10 +13,10 @@ use tauri::menu::{
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, Wry};
 
-use super::{AppState, Request, Shared};
+use super::{AppState, Request};
 use crate::config::Config;
 use crate::icon::{self, Glyph, MenuIcon};
-use crate::lenses;
+use crate::lenses::{self, store::RunResult};
 use crate::system;
 
 const TRAY_ID: &str = "lenstica";
@@ -66,12 +67,8 @@ pub fn create(app: &AppHandle) -> Result<()> {
 }
 
 fn on_click(app: &AppHandle, event: MenuEvent) {
-    let click = {
-        let state = app.state::<AppState>();
-        let shared = state.shared.lock().unwrap_or_else(|p| p.into_inner());
-        shared.clicks.get(&event.id.0).cloned()
-    };
     let state = app.state::<AppState>();
+    let click = state.lock().clicks.get(&event.id.0).cloned();
     let outcome = match click {
         Some(Click::Fix { lens, key }) => {
             state.send(Request::Fix { lens, key });
@@ -132,10 +129,14 @@ fn file_of(f: &Finding) -> Option<PathBuf> {
         .filter(|p| p.is_file())
 }
 
-/// Builds menu items while recording what each one does.
+/// Builds menu items while recording what each one does. Works from a
+/// snapshot: every menu call waits for the main thread, which may itself be
+/// waiting for the shared state, so the state is never locked while building.
 struct Builder<'a> {
     app: &'a AppHandle,
-    shared: &'a mut Shared,
+    results: &'a BTreeMap<String, RunResult>,
+    running: &'a BTreeSet<String>,
+    clicks: HashMap<String, Click>,
     /// With `LENSTICA_DEBUG`, the menu as text (indent = depth), logged on rebuild.
     trace: Option<Vec<String>>,
 }
@@ -157,7 +158,7 @@ impl Builder<'_> {
 
     fn record(&mut self, id: &str, click: Option<Click>) {
         if let Some(click) = click {
-            self.shared.clicks.insert(id.to_string(), click);
+            self.clicks.insert(id.to_string(), click);
         }
     }
 
@@ -283,26 +284,15 @@ impl Builder<'_> {
     fn lens(&mut self, cfg: &Config, r: &lenses::Registered) -> Result<Submenu<Wry>> {
         let id = r.id().to_string();
         let title = r.lens.title().to_string();
-        let result = self.shared.results.get(&id).cloned();
-        let alerts: Vec<Finding> = result
-            .as_ref()
-            .map(|res| {
-                let mut list: Vec<Finding> = res
-                    .findings
-                    .iter()
-                    .filter(|f| lenses::is_alert(cfg, f))
-                    .cloned()
-                    .collect();
-                list.sort_by(|a, b| {
-                    b.severity
-                        .cmp(&a.severity)
-                        .then_with(|| a.title.cmp(&b.title))
-                });
-                list
-            })
-            .unwrap_or_default();
-        let state = match &result {
-            _ if self.shared.running.contains(&id) => MenuIcon::Running,
+        let result = self.results.get(&id);
+        let mut alerts: Vec<&Finding> = result
+            .into_iter()
+            .flat_map(|res| &res.findings)
+            .filter(|f| lenses::is_alert(cfg, f))
+            .collect();
+        alerts.sort_by(|a, b| lenses::by_severity(a, b));
+        let state = match result {
+            _ if self.running.contains(&id) => MenuIcon::Running,
             None => MenuIcon::NotRun,
             Some(res) if res.error.is_some() => MenuIcon::Failed,
             Some(_) => match alerts.first() {
@@ -315,13 +305,7 @@ impl Builder<'_> {
         } else {
             format!("{title} ({})", alerts.len())
         };
-        let summary = match &result {
-            None => "Not run yet".to_string(),
-            Some(res) => res
-                .error
-                .as_ref()
-                .map_or(res.summary.clone(), |e| format!("Failed: {e}")),
-        };
+        let summary = result.map_or_else(|| "Not run yet".to_string(), RunResult::status_text);
         self.trace(0, &label, Some(state), None);
         let sub = Submenu::with_id_and_icon(
             self.app,
@@ -365,11 +349,10 @@ impl Builder<'_> {
     }
 
     fn menu(&mut self, cfg: &Config, alerts: &[Severity]) -> Result<Menu<Wry>> {
-        self.shared.clicks.clear();
         let app = self.app;
         let mut items: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
         let (headline, state) = match alerts.iter().max() {
-            _ if self.shared.results.is_empty() => ("Checking…".to_string(), MenuIcon::Running),
+            _ if self.results.is_empty() => ("Checking…".to_string(), MenuIcon::Running),
             None => (
                 format!("Nothing needs attention · {}-day cooldown", cfg.min_days),
                 MenuIcon::Ok,
@@ -438,26 +421,32 @@ fn try_refresh(app: &AppHandle) -> Result<()> {
     };
     let cfg = Config::load().unwrap_or_default();
     let state = app.state::<AppState>();
-    let mut shared = state.shared.lock().unwrap_or_else(|p| p.into_inner());
-    let alerts: Vec<Severity> = shared
-        .results
-        .values()
-        .flat_map(|r| &r.findings)
+    let (results, running) = {
+        let shared = state.lock();
+        (shared.results.clone(), shared.running.clone())
+    };
+    // Lenses turned off since their last run are not counted, as in their menus.
+    let enabled = lenses::enabled_ids(&cfg);
+    let alerts: Vec<Severity> = results
+        .iter()
+        .filter(|(id, _)| enabled.contains(*id))
+        .flat_map(|(_, r)| &r.findings)
         .filter(|f| lenses::is_alert(&cfg, f))
         .map(|f| f.severity)
         .collect();
-    let empty = shared.results.is_empty();
-    let debug = std::env::var_os("LENSTICA_DEBUG").is_some_and(|v| v != "0");
+    let empty = results.is_empty();
     let mut builder = Builder {
         app,
-        shared: &mut shared,
-        trace: debug.then(Vec::new),
+        results: &results,
+        running: &running,
+        clicks: HashMap::new(),
+        trace: super::debug().then(Vec::new),
     };
     let menu = builder.menu(&cfg, &alerts)?;
     if let Some(lines) = builder.trace.take() {
         eprintln!("lenstica menu:\n{}", lines.join("\n"));
     }
-    drop(shared);
+    state.lock().clicks = builder.clicks;
     let glyph = match (alerts.len(), empty) {
         (0, true) => Glyph::Checking,
         (0, false) => Glyph::Protected,

@@ -43,6 +43,16 @@ pub struct Source {
     pub entries: Vec<Locked>,
 }
 
+impl Source {
+    pub fn location(&self) -> lenstica_lens::Location {
+        lenstica_lens::Location {
+            label: self.label.clone(),
+            path: self.path.clone(),
+            line: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
@@ -157,13 +167,23 @@ fn committed_at(git: &Path, path: &Path, ctx: &Ctx) -> Option<DateTime<Utc>> {
 
 // ---- the audit ----------------------------------------------------------------
 
-pub fn ignored(rules: &[String], pkg: &Pkg) -> bool {
-    rules.iter().any(
+/// Whether an ignore rule (`name`, or `name@version`; a scoped `@s/pkg`
+/// keeps its leading `@`) covers this package.
+pub fn ignore_matches<'a>(
+    rules: impl IntoIterator<Item = &'a String>,
+    name: &str,
+    version: &str,
+) -> bool {
+    rules.into_iter().any(
         |r| match r.rsplit_once('@').filter(|(n, _)| !n.is_empty()) {
-            Some((name, version)) => name == pkg.name && version == pkg.version,
-            None => r == &pkg.name,
+            Some((n, v)) => n == name && v == version,
+            None => r == name,
         },
     )
+}
+
+pub fn ignored(rules: &[String], pkg: &Pkg) -> bool {
+    ignore_matches(rules, &pkg.name, &pkg.version)
 }
 
 pub fn collect(cfg: &Config, ctx: &Ctx, roots: &[PathBuf], global: bool) -> Result<Collected> {
@@ -186,7 +206,9 @@ pub fn collect(cfg: &Config, ctx: &Ctx, roots: &[PathBuf], global: bool) -> Resu
             Err(e) => errors.push(format!("{}: {e:#}", tilde(&path))),
         }
     }
-    times.save()?;
+    if let Err(e) = times.save() {
+        errors.push(format!("{e:#}"));
+    }
     if global {
         sources.extend(global::collect(ctx, &mut errors));
     }
@@ -225,11 +247,11 @@ pub fn classify(sources: &[Source], cache: &Cache, cfg: &Config, ctx: &Ctx) -> C
                 continue;
             };
             let age_now = (ctx.now - published).num_seconds();
-            let (kind, age_secs) = if age_now < ctx.target_secs {
+            let (kind, age_secs) = if age_now < ctx.target_secs() {
                 (Kind::TooNew, age_now.max(0))
             } else if let Some(at) = locked_at {
                 let age_then = (at - published).num_seconds();
-                if age_then >= ctx.target_secs {
+                if age_then >= ctx.target_secs() {
                     continue;
                 }
                 (Kind::LockedWhileTooNew, age_then.max(0))
@@ -291,19 +313,18 @@ fn plausible_lock_time(source: &Source, cache: &Cache) -> Option<DateTime<Utc>> 
 
 /// Ages read better rounded: to the hour above a day, to the minute below.
 fn round_age(secs: i64) -> i64 {
-    let unit = if secs >= 86_400 { 3600 } else { 60 };
+    use crate::duration::{DAY, HOUR, MINUTE};
+    let unit = if secs >= DAY { HOUR } else { MINUTE };
     (secs / unit) * unit
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::duration::DAY;
 
     fn ctx(now: DateTime<Utc>) -> Ctx {
         Ctx {
             days: 7,
-            target_secs: 7 * DAY,
             search: Default::default(),
             now,
         }
@@ -321,6 +342,7 @@ mod tests {
                 version: "1.0.0".into(),
             },
             published: Some(at(published)),
+            public: true,
         }
     }
 

@@ -1,5 +1,7 @@
 //! CVSS v3.x base score from a vector string, for advisories that carry a
 //! vector but no severity label (FIRST CVSS v3.1 specification, section 7.1).
+//! CVSS v4 vectors are not scored; an advisory with only one of those falls
+//! back to medium.
 
 use lenstica_lens::Severity;
 

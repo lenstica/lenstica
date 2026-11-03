@@ -5,9 +5,12 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 
-use anyhow::{Context, Result, bail};
-use toml_edit::{DocumentMut, Item, Value};
+use anyhow::{Context, Result};
+use serde::de::DeserializeOwned;
+use toml_edit::{DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
 use crate::duration::unquote;
 
@@ -19,37 +22,162 @@ pub fn read_optional(path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// A suffix no other thread or process uses at the same time, for temp names.
+pub fn unique_suffix() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "{}-{}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// Run a read-modify-write of Lenstica's state files with no other writer
+/// active: lenses record from parallel threads, and the menu bar app and a
+/// CLI run may write at the same moment.
+pub fn with_state_lock<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
+    static THREADS: Mutex<()> = Mutex::new(());
+    let _thread = THREADS.lock().unwrap_or_else(PoisonError::into_inner);
+    let _process = crate::system::wait_named_lock("state")?;
+    f()
+}
+
+/// Parse a JSON file; `None` when it is missing, unreadable or malformed.
+pub fn read_json<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    let text = read_optional(path).ok().flatten()?;
+    serde_json::from_str(&text).ok()
+}
+
 fn backup_path(path: &Path) -> PathBuf {
     let mut name = path.file_name().unwrap_or_default().to_os_string();
     name.push(".lenstica-backup");
     path.with_file_name(name)
 }
 
-/// Write via a temp file and rename. The first time Lenstica touches an
-/// existing file, the original is kept next to it as `<name>.lenstica-backup`.
+/// Write via a temp file and rename. The first time Lenstica touches a file,
+/// the original is kept next to it as `<name>.lenstica-backup` (empty when
+/// there was no file, so a later write never backs up Lenstica's own text).
+/// A symlinked file (dotfile managers) is written through the link, and the
+/// file keeps its permissions: some of these files hold registry tokens.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<()> {
+    let is_link = fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink());
+    let target = if is_link {
+        fs::canonicalize(path).with_context(|| format!("cannot follow {}", path.display()))?
+    } else {
+        path.to_path_buf()
+    };
+    let path = target.as_path();
     let backup = backup_path(path);
     // Before the rename to Lenstica, backups were `<name>.cooldown-backup`;
     // one of those already holds the original.
     let mut old = path.file_name().unwrap_or_default().to_os_string();
     old.push(".cooldown-backup");
     let backed_up = backup.exists() || path.with_file_name(old).exists();
-    if path.exists() && !backed_up {
-        fs::copy(path, &backup).with_context(|| format!("cannot back up {}", path.display()))?;
+    if !backed_up {
+        if path.exists() {
+            fs::copy(path, &backup)
+                .with_context(|| format!("cannot back up {}", path.display()))?;
+        } else {
+            write_state(&backup, "")?;
+        }
     }
-    write_state(path, contents)
+    let permissions = fs::metadata(path).ok().map(|m| m.permissions());
+    write_with(path, contents, permissions)
 }
 
 /// Write via a temp file and rename, without a backup: for Lenstica's own state.
 pub fn write_state(path: &Path, contents: &str) -> Result<()> {
+    write_with(path, contents, None)
+}
+
+fn write_with(path: &Path, contents: &str, permissions: Option<fs::Permissions>) -> Result<()> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     }
+    // Unique per writer, so two threads or processes writing the same file
+    // never truncate each other's temp file mid-rename.
     let mut tmp_name = path.file_name().unwrap_or_default().to_os_string();
-    tmp_name.push(".lenstica-tmp");
+    tmp_name.push(format!(".{}.lenstica-tmp", unique_suffix()));
     let tmp = path.with_file_name(tmp_name);
     fs::write(&tmp, contents).with_context(|| format!("cannot write {}", tmp.display()))?;
+    if let Some(p) = permissions {
+        fs::set_permissions(&tmp, p)
+            .with_context(|| format!("cannot set permissions on {}", tmp.display()))?;
+    }
     fs::rename(&tmp, path).with_context(|| format!("cannot replace {}", path.display()))
+}
+
+// ---- JSON with comments ------------------------------------------------------
+
+/// JSON with comments and trailing commas (`bun.lock`, VS Code and opencode
+/// settings) as plain JSON.
+pub fn jsonc_to_json(src: &str) -> String {
+    strip_trailing_commas(&strip_json_comments(src))
+}
+
+fn strip_json_comments(src: &str) -> String {
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    let (mut in_string, mut escaped) = (false, false);
+    while let Some(c) = chars.next() {
+        if in_string {
+            out.push(c);
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match (c, chars.peek()) {
+            ('/', Some('/')) => while chars.next_if(|&n| n != '\n').is_some() {},
+            ('/', Some('*')) => {
+                chars.next();
+                let mut prev = '\0';
+                for n in chars.by_ref() {
+                    if prev == '*' && n == '/' {
+                        break;
+                    }
+                    prev = n;
+                }
+                out.push(' ');
+            }
+            _ => {
+                in_string = c == '"';
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+fn strip_trailing_commas(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let (mut in_string, mut escaped) = (false, false);
+    for (i, &c) in chars.iter().enumerate() {
+        if in_string {
+            out.push(c);
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        if c == '"' {
+            in_string = true;
+        } else if c == ',' {
+            let next = chars[i + 1..].iter().find(|n| !n.is_whitespace());
+            if matches!(next, Some('}' | ']')) {
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
 }
 
 // ---- TOML -------------------------------------------------------------------
@@ -65,35 +193,60 @@ pub fn toml_get(src: &str, keys: &[&str]) -> Result<Option<String>> {
     }
     Ok(match item.as_value() {
         Some(Value::String(s)) => Some(s.value().clone()),
-        Some(other) => Some(other.to_string().trim().to_string()),
+        Some(other) => {
+            // Without its decor: `604800 # 7 days` is the number alone.
+            let mut bare = other.clone();
+            bare.decor_mut().clear();
+            Some(bare.to_string())
+        }
         None => None,
     })
 }
 
+/// Set `keys` to `value`, creating tables as needed. A comment on a replaced
+/// value described the old value and goes with it, as in [`yaml_set_top`].
 pub fn toml_set(src: &str, keys: &[&str], value: Value) -> Result<String> {
     let (last, tables) = keys.split_last().expect("at least one key");
     let mut doc: DocumentMut = src.parse().context("invalid TOML")?;
-    let mut table = doc.as_table_mut();
-    for key in tables {
-        if !table.contains_key(key) {
-            table.insert(key, Item::Table(toml_edit::Table::new()));
-        }
-        table = match table.get_mut(key).and_then(Item::as_table_mut) {
-            Some(t) => t,
-            None => bail!("`{key}` exists but is not a [table]; edit it by hand"),
-        };
-    }
-    table.insert(last, Item::Value(value));
+    toml_table_at(doc.as_item_mut(), tables)?.insert(last, Item::Value(value));
     Ok(doc.to_string())
+}
+
+/// The table at `keys` under `item`, created where missing: a `[table]`, or
+/// an inline table inside an inline one (`install = { ... }`).
+pub fn toml_table_at<'a>(mut item: &'a mut Item, keys: &[&str]) -> Result<&'a mut dyn TableLike> {
+    for key in keys {
+        let inline = item.as_inline_table().is_some();
+        let table = item
+            .as_table_like_mut()
+            .with_context(|| format!("`{key}`'s parent is not a table; edit it by hand"))?;
+        if !table.contains_key(key) {
+            let new = if inline {
+                Item::Value(Value::InlineTable(InlineTable::new()))
+            } else {
+                Item::Table(Table::new())
+            };
+            table.insert(key, new);
+        }
+        item = table.get_mut(key).expect("just inserted");
+    }
+    item.as_table_like_mut().with_context(|| {
+        format!(
+            "`{}` exists but is not a table; edit it by hand",
+            keys.join(".")
+        )
+    })
 }
 
 // ---- YAML (top-level scalar keys only) --------------------------------------
 
 fn yaml_key_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let rest = line.strip_prefix(key).or_else(|| {
-        line.strip_prefix('"')
-            .and_then(|l| l.strip_prefix(key))
-            .and_then(|l| l.strip_prefix('"'))
+        ['"', '\''].into_iter().find_map(|q| {
+            line.strip_prefix(q)
+                .and_then(|l| l.strip_prefix(key))
+                .and_then(|l| l.strip_prefix(q))
+        })
     })?;
     rest.trim_start().strip_prefix(':')
 }
@@ -123,7 +276,9 @@ pub fn yaml_get_top(src: &str, key: &str) -> Option<String> {
 }
 
 /// Replace (or append) `key: value` at the top level, dropping any indented
-/// block that belonged to a previous value of the key.
+/// block that belonged to a previous value of the key. A comment on the
+/// replaced line described the old value and goes with it; the file's line
+/// endings stay.
 pub fn yaml_set_top(src: &str, key: &str, value: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut replaced = false;
@@ -151,8 +306,9 @@ pub fn yaml_set_top(src: &str, key: &str, value: &str) -> String {
         }
         out.push(format!("{key}: {value}"));
     }
-    let mut text = out.join("\n");
-    text.push('\n');
+    let newline = if src.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut text = out.join(newline);
+    text.push_str(newline);
     text
 }
 
@@ -167,8 +323,8 @@ pub fn ini_get(src: &str, section: Option<&str>, key: &str) -> Option<String> {
         if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
             continue;
         }
-        if line.starts_with('[') && line.ends_with(']') {
-            current = Some(line[1..line.len() - 1].trim().to_ascii_lowercase());
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            current = Some(name.trim().to_ascii_lowercase());
             continue;
         }
         if current.as_deref() != section {
@@ -187,6 +343,45 @@ pub fn ini_get(src: &str, section: Option<&str>, key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edits_keep_comments_inline_tables_and_line_endings() {
+        let src = "[install]\nminimumReleaseAge = 604800 # 7 days\n";
+        assert_eq!(
+            toml_get(src, &["install", "minimumReleaseAge"]).unwrap(),
+            Some("604800".to_string())
+        );
+        let out = toml_set(
+            src,
+            &["install", "minimumReleaseAge"],
+            Value::from(1_209_600),
+        )
+        .unwrap();
+        assert_eq!(out, "[install]\nminimumReleaseAge = 1209600\n");
+        let inline = "install = { registry = \"x\" }\n";
+        let out = toml_set(inline, &["install", "minimumReleaseAge"], Value::from(1)).unwrap();
+        assert_eq!(
+            toml_get(&out, &["install", "minimumReleaseAge"]).unwrap(),
+            Some("1".to_string())
+        );
+        assert_eq!(
+            yaml_set_top(
+                "a: 1\r\n'enableScripts': true\r\n",
+                "enableScripts",
+                "false"
+            ),
+            "a: 1\r\nenableScripts: false\r\n"
+        );
+    }
+
+    #[test]
+    fn jsonc_becomes_json() {
+        assert_eq!(jsonc_to_json("{\"a\": \"x,}\",}"), "{\"a\": \"x,}\"}");
+        let src = "{\n  // servers\n  \"url\": \"http://x//y\", /* old */\n  \"b\": [1,],\n}";
+        let v: serde_json::Value = serde_json::from_str(&jsonc_to_json(src)).unwrap();
+        assert_eq!(v["url"], "http://x//y");
+        assert_eq!(v["b"], serde_json::json!([1]));
+    }
 
     #[test]
     fn toml_round_trip_keeps_comments() {

@@ -1,7 +1,7 @@
 //! Small OS integrations: opening files, the single-instance lock.
 
 use std::fs::{self, File, TryLockError};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result};
@@ -19,12 +19,15 @@ fn spawn(mut cmd: Command, what: &str) -> Result<()> {
     Ok(())
 }
 
+/// The platform's "open with the default handler". On Windows this is
+/// ShellExecute through `rundll32`, never `cmd /C start`: cmd would treat `&`,
+/// `|` and `^` in a link as commands.
 fn opener() -> Command {
     if cfg!(target_os = "macos") {
         Command::new("open")
     } else if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.args(["/C", "start", ""]);
+        let mut c = Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
         c
     } else {
         Command::new("xdg-open")
@@ -51,7 +54,7 @@ pub fn reveal(path: &Path) -> Result<()> {
         c
     } else if cfg!(windows) {
         let mut c = Command::new("explorer");
-        c.arg(format!("/select,{}", path.display()));
+        select_arg(&mut c, path);
         c
     } else {
         let mut c = Command::new("xdg-open");
@@ -86,6 +89,19 @@ pub fn open(path: &Path) -> Result<()> {
     spawn(cmd, &path.display().to_string())
 }
 
+/// `/select,"<path>"`, quoted the way Explorer parses it (not the way Rust
+/// quotes a whole argument).
+#[cfg(windows)]
+fn select_arg(cmd: &mut Command, path: &Path) {
+    use std::os::windows::process::CommandExt;
+    cmd.raw_arg(format!("/select,\"{}\"", path.display()));
+}
+
+#[cfg(not(windows))]
+fn select_arg(cmd: &mut Command, path: &Path) {
+    cmd.arg(format!("/select,{}", path.display()));
+}
+
 /// Held for the life of the process so only one monitor runs at a time.
 pub struct InstanceLock {
     _file: File,
@@ -96,12 +112,25 @@ pub fn acquire_lock() -> Result<Option<InstanceLock>> {
     acquire_named_lock("monitor")
 }
 
-/// `Ok(None)` when another process already holds the `name` lock.
-pub fn acquire_named_lock(name: &str) -> Result<Option<InstanceLock>> {
+fn lock_file(name: &str) -> Result<(File, PathBuf)> {
     let dir = paths::state_dir();
     fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
     let path = dir.join(format!("{name}.lock"));
     let file = File::create(&path).with_context(|| format!("cannot open {}", path.display()))?;
+    Ok((file, path))
+}
+
+/// Wait for the `name` lock and hold it until the returned guard drops.
+pub fn wait_named_lock(name: &str) -> Result<InstanceLock> {
+    let (file, path) = lock_file(name)?;
+    file.lock()
+        .with_context(|| format!("cannot lock {}", path.display()))?;
+    Ok(InstanceLock { _file: file })
+}
+
+/// `Ok(None)` when another process already holds the `name` lock.
+pub fn acquire_named_lock(name: &str) -> Result<Option<InstanceLock>> {
+    let (file, path) = lock_file(name)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(InstanceLock { _file: file })),
         Err(TryLockError::WouldBlock) => Ok(None),

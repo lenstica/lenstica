@@ -4,10 +4,10 @@
 //! recorded by other processes (`lenstica check`) are picked up too.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -16,10 +16,10 @@ use tauri::{AppHandle, Manager};
 use super::{AppState, Request};
 use crate::config::{self, Config};
 use crate::lenses::{self, store::RunResult};
-use crate::managers::{self, Ctx, Mode};
+use crate::managers::{self, Action, Ctx, Mode};
 use crate::paths;
 
-fn mtime(path: &PathBuf) -> Option<SystemTime> {
+fn mtime(path: &Path) -> Option<SystemTime> {
     std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
@@ -32,19 +32,23 @@ fn log(lines: &[String]) {
 
 fn with_shared(app: &AppHandle, f: impl FnOnce(&mut super::Shared)) {
     let state = app.state::<AppState>();
-    let mut shared = state.shared.lock().unwrap_or_else(|p| p.into_inner());
+    let mut shared = state.lock();
     f(&mut shared);
 }
 
 struct Scheduler {
     app: AppHandle,
     done_tx: Sender<RunResult>,
-    last_run: HashMap<String, Instant>,
     watched: HashMap<String, Vec<(PathBuf, Option<SystemTime>)>>,
+    /// When each lens last ran, by the wall clock (time asleep counts).
     known: HashMap<String, DateTime<Utc>>,
     /// Lenses asked for explicitly, with whether to stay offline.
     forced: BTreeMap<String, bool>,
     force_all: bool,
+    /// The last settings that loaded, used while the file is broken.
+    last_good: Option<Config>,
+    /// The settings error last reported, so it is reported once.
+    config_error: Option<String>,
 }
 
 pub fn start(app: AppHandle, inbox: Receiver<Request>) {
@@ -53,15 +57,16 @@ pub fn start(app: AppHandle, inbox: Receiver<Request>) {
         let mut s = Scheduler {
             app,
             done_tx,
-            last_run: HashMap::new(),
             watched: HashMap::new(),
             known: HashMap::new(),
             forced: BTreeMap::new(),
             force_all: false,
+            last_good: None,
+            config_error: None,
         };
         // Results already on disk count as runs, so a restart does not redo everything at once.
         for r in lenses::store::load().values() {
-            s.remember(r, Some(r.ran_at));
+            s.remember(r);
         }
         super::refresh(&s.app);
         s.run(inbox, done_rx);
@@ -69,12 +74,7 @@ pub fn start(app: AppHandle, inbox: Receiver<Request>) {
 }
 
 impl Scheduler {
-    fn remember(&mut self, r: &RunResult, ran_at: Option<DateTime<Utc>>) {
-        let at = ran_at
-            .and_then(|t| (Utc::now() - t).to_std().ok())
-            .and_then(|age| Instant::now().checked_sub(age))
-            .unwrap_or_else(Instant::now);
-        self.last_run.insert(r.id.clone(), at);
+    fn remember(&mut self, r: &RunResult) {
         self.known.insert(r.id.clone(), r.ran_at);
         // Taken after the run, so a lens's own writes do not look like an edit.
         self.watched.insert(
@@ -94,7 +94,7 @@ impl Scheduler {
                 Err(RecvTimeoutError::Disconnected) => return,
             }
             while let Ok(result) = done_rx.try_recv() {
-                self.remember(&result, None);
+                self.remember(&result);
                 with_shared(&self.app, |sh| {
                     sh.running.remove(&result.id);
                     sh.results.insert(result.id.clone(), result);
@@ -105,7 +105,7 @@ impl Scheduler {
                 store_mtime = mtime(&store_path);
                 self.pick_up_foreign_results();
             }
-            let Ok(cfg) = Config::load() else { continue };
+            let Some(cfg) = self.settings() else { continue };
             let settings_changed = mtime(&config::path()) != config_mtime;
             if settings_changed {
                 config_mtime = mtime(&config::path());
@@ -114,18 +114,39 @@ impl Scheduler {
         }
     }
 
+    /// The settings, or while the file is broken the last that loaded; the
+    /// error is reported once per distinct problem.
+    fn settings(&mut self) -> Option<Config> {
+        match Config::load() {
+            Ok(cfg) => {
+                self.config_error = None;
+                self.last_good = Some(cfg.clone());
+                Some(cfg)
+            }
+            Err(e) => {
+                let text = format!("{e:#}");
+                if self.config_error.as_ref() != Some(&text) {
+                    super::notify_error(&format!("{text}. Lenstica keeps its last good settings."));
+                    self.config_error = Some(text);
+                }
+                self.last_good.clone()
+            }
+        }
+    }
+
+    fn running(&self) -> std::collections::BTreeSet<String> {
+        self.app.state::<AppState>().lock().running.clone()
+    }
+
     fn pick_up_foreign_results(&mut self) {
-        let running = {
-            let state = self.app.state::<AppState>();
-            let shared = state.shared.lock().unwrap_or_else(|p| p.into_inner());
-            shared.running.clone()
-        };
+        let running = self.running();
         let mut changed = false;
         for (id, r) in lenses::store::load() {
-            if running.contains(&id) || self.known.get(&id) == Some(&r.ran_at) {
+            // Only newer results: an older one must never replace what is shown.
+            if running.contains(&id) || self.known.get(&id).is_some_and(|k| *k >= r.ran_at) {
                 continue;
             }
-            self.remember(&r, None);
+            self.remember(&r);
             with_shared(&self.app, |sh| {
                 sh.results.insert(id, r);
             });
@@ -137,11 +158,8 @@ impl Scheduler {
     }
 
     fn launch_due(&mut self, cfg: &Config, settings_changed: bool) {
-        let running = {
-            let state = self.app.state::<AppState>();
-            let shared = state.shared.lock().unwrap_or_else(|p| p.into_inner());
-            shared.running.clone()
-        };
+        let running = self.running();
+        let now = Utc::now();
         let mut started = Vec::new();
         for r in lenses::registry(cfg)
             .into_iter()
@@ -152,10 +170,7 @@ impl Scheduler {
                 continue;
             }
             let forced = self.forced.remove(&id);
-            let interval_due = self
-                .last_run
-                .get(&id)
-                .is_none_or(|t| t.elapsed() >= lenses::interval(cfg, &r));
+            let interval_due = lenses::is_due(cfg, &r, self.known.get(&id).copied(), now);
             let file_changed = self
                 .watched
                 .get(&id)
@@ -191,43 +206,80 @@ impl Scheduler {
         match request {
             Request::CheckAll => self.force_all = true,
             Request::Run(ids, offline) => {
-                self.forced.extend(ids.into_iter().map(|id| (id, offline)))
+                self.forced.extend(ids.into_iter().map(|id| (id, offline)));
             }
             Request::ApplyAll => {
-                let outcome = (|| -> Result<String> {
-                    let cfg = Config::load()?;
-                    let outcomes =
-                        managers::apply_all(&cfg, &Ctx::new(&cfg), &[], Mode::Exact, false);
-                    let changed = outcomes
-                        .iter()
-                        .filter(|o| matches!(o.action, managers::Action::Changed { .. }))
-                        .count();
-                    Ok(format!(
-                        "{changed} package managers set to {} days",
-                        cfg.min_days
-                    ))
-                })();
-                match outcome {
-                    Ok(done) => super::toast(&self.app, done, true),
+                match apply_all() {
+                    Ok((done, failed)) if failed.is_empty() => super::toast(&self.app, done, true),
+                    Ok((done, failed)) => {
+                        let text = format!("{done}; failed: {}", failed.join("; "));
+                        super::toast(&self.app, text.clone(), false);
+                        super::notify_error(&text);
+                    }
                     Err(e) => super::notify_error(&format!("{e:#}")),
                 }
                 self.force_all = true;
             }
-            Request::Fix { lens, key } => {
-                let app = self.app.clone();
-                thread::spawn(move || {
-                    match Config::load().and_then(|cfg| lenses::fix(&cfg, &lens, &key)) {
-                        Ok(done) => {
-                            log(std::slice::from_ref(&done));
-                            super::toast(&app, done, true);
-                        }
-                        Err(e) => {
-                            super::toast(&app, format!("{e:#}"), false);
-                            super::notify_error(&format!("{e:#}"));
-                        }
-                    }
-                });
-            }
+            Request::Fix { lens, key } => self.fix(lens, key),
         }
     }
+
+    /// Fix a finding on its own thread. The lens counts as running until the
+    /// fix has re-run it, so the scheduler never starts it alongside.
+    fn fix(&mut self, lens: String, key: String) {
+        if self.running().contains(&lens) {
+            super::toast(
+                &self.app,
+                "That lens is running; try again when it finishes",
+                false,
+            );
+            return;
+        }
+        with_shared(&self.app, |sh| {
+            sh.running.insert(lens.clone());
+        });
+        let (app, done_tx) = (self.app.clone(), self.done_tx.clone());
+        thread::spawn(move || {
+            match Config::load().and_then(|cfg| lenses::fix(&cfg, &lens, &key)) {
+                Ok((done, result)) => {
+                    log(std::slice::from_ref(&done));
+                    super::toast(&app, done, true);
+                    let _ = done_tx.send(result);
+                }
+                Err(e) => {
+                    with_shared(&app, |sh| {
+                        sh.running.remove(&lens);
+                    });
+                    super::refresh(&app);
+                    super::toast(&app, format!("{e:#}"), false);
+                    super::notify_error(&format!("{e:#}"));
+                }
+            }
+        });
+    }
+}
+
+/// Set every package manager to the cooldown: what changed, and what failed.
+fn apply_all() -> Result<(String, Vec<String>)> {
+    let cfg = Config::load()?;
+    let outcomes = managers::apply_all(&cfg, &Ctx::new(&cfg), &[], Mode::Exact, false);
+    let changed = outcomes
+        .iter()
+        .filter(|o| matches!(o.action, Action::Changed { .. }))
+        .count();
+    let failed = outcomes
+        .iter()
+        .filter_map(|o| match &o.action {
+            Action::Failed { error } => Some(format!("{}: {error}", o.name)),
+            _ => None,
+        })
+        .collect();
+    Ok((
+        format!(
+            "{} set to {} days",
+            crate::lenses::shared::plural(changed, "package manager", "package managers"),
+            cfg.min_days
+        ),
+        failed,
+    ))
 }

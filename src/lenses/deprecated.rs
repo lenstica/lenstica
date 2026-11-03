@@ -1,12 +1,15 @@
 //! Locked and installed versions their maintainers deprecated (npm) or
-//! yanked (PyPI). Read from the same registry documents as publish times;
-//! re-checked weekly.
+//! yanked (PyPI, crates.io). Read from the same registry documents as publish
+//! times; re-checked weekly.
 
 use anyhow::Result;
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Context, Finding, Lens, Report, Severity};
 
 use super::shared;
-use crate::audit::{self, registry::Cache};
+use crate::audit::{
+    self,
+    registry::{Cache, Status},
+};
 use crate::config::Config;
 use crate::managers::Ctx;
 
@@ -20,7 +23,7 @@ impl Lens for Deprecated {
         "Deprecated and yanked"
     }
     fn description(&self) -> &str {
-        "Locked and installed versions marked deprecated on npm or yanked on PyPI, usually because they are broken, unmaintained or replaced."
+        "Locked and installed versions marked deprecated on npm or yanked on PyPI or crates.io, usually because they are broken, unmaintained or replaced."
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
@@ -32,7 +35,7 @@ impl Lens for Deprecated {
         let wanted: std::collections::BTreeSet<_> = sources
             .iter()
             .flat_map(|s| s.entries.iter())
-            .filter(|e| !audit::ignored(&cfg.audit.ignore, &e.pkg))
+            .filter(|e| e.public && !audit::ignored(&cfg.audit.ignore, &e.pkg))
             .map(|e| e.pkg.clone())
             .collect();
         let mut passing = Vec::new();
@@ -48,10 +51,10 @@ impl Lens for Deprecated {
                 continue;
             };
             checked += 1;
-            let (severity, kind, message) = match status.split_once(": ") {
-                Some(("deprecated", msg)) => (Severity::Info, "deprecated", msg),
-                Some(("yanked", msg)) => (Severity::Low, "yanked", msg),
-                _ => continue,
+            let (severity, kind, message) = match status {
+                Status::Deprecated(msg) => (Severity::Info, "deprecated", msg),
+                Status::Yanked(msg) => (Severity::Low, "yanked", msg),
+                Status::Fine => continue,
             };
             let mut f = Finding::new(
                 format!("{kind}|{}|{}|{}", pkg.eco.label(), pkg.name, pkg.version),
@@ -69,11 +72,7 @@ impl Lens for Deprecated {
                 .iter()
                 .filter(|s| s.entries.iter().any(|e| &e.pkg == pkg))
             {
-                f = f.at(Location {
-                    label: s.label.clone(),
-                    path: s.path.clone(),
-                    line: None,
-                });
+                f = f.at(s.location());
             }
             findings.push(f);
         }

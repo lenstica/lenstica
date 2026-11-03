@@ -6,7 +6,8 @@
 //! output (gitleaks `Secret`/`Match`, trufflehog `Raw`) are never read into a
 //! finding.
 
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -15,7 +16,7 @@ use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
 use serde_json::Value;
 
 use super::{Group, Origin, Registered};
-use crate::config::{Config, External};
+use crate::config::{Config, External, ExternalFormat};
 use crate::exec;
 use crate::paths::tilde;
 
@@ -42,7 +43,7 @@ struct Tool {
 }
 
 impl Tool {
-    fn invoke(&self, cx: &Context, root: Option<&PathBuf>) -> Result<String> {
+    fn invoke(&self, cx: &Context, root: Option<&Path>) -> Result<String> {
         let replace = |arg: &str| match root {
             Some(r) => arg.replace("{root}", &r.to_string_lossy()),
             None => arg.to_string(),
@@ -77,27 +78,27 @@ impl Lens for Tool {
         &self.description
     }
     fn default_interval(&self) -> Duration {
-        Duration::from_secs(self.spec.interval_minutes.unwrap_or(120) * 60)
+        Duration::from_secs(self.spec.interval_minutes.unwrap_or(120).saturating_mul(60))
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
         let mut outputs = Vec::new();
         if self.spec.per_root {
             for root in cx.roots {
-                outputs.push((Some(root), self.invoke(cx, Some(root))?));
+                outputs.push((Some(root.as_path()), self.invoke(cx, Some(root))?));
             }
         } else {
             outputs.push((None, self.invoke(cx, None)?));
         }
         let mut report = Report::default();
         for (root, out) in &outputs {
-            let part =
-                parse(&self.spec.format, out, root.map(|r| r.as_path())).with_context(|| {
-                    format!(
-                        "cannot read {} output as `{}`",
-                        self.spec.id, self.spec.format
-                    )
-                })?;
+            let part = parse(self.spec.format, out, *root).with_context(|| {
+                format!(
+                    "cannot read {} output as `{}`",
+                    self.spec.id,
+                    self.spec.format.as_str()
+                )
+            })?;
             report.findings.extend(part.findings);
             report.passing.extend(part.passing);
             report.actions.extend(part.actions);
@@ -108,20 +109,41 @@ impl Lens for Tool {
         if self.spec.per_root || report.summary.is_empty() {
             report.summary = format!("{} findings from {}", report.findings.len(), self.title);
         }
-        // Several roots can report the same file (nested worktrees): keep one of each.
-        let mut seen = std::collections::BTreeSet::new();
-        report.findings.retain(|f| seen.insert(f.key.clone()));
+        report.findings = merge_duplicates(std::mem::take(&mut report.findings));
         Ok(report)
     }
 }
 
-pub fn parse(format: &str, out: &str, root: Option<&std::path::Path>) -> Result<Report> {
+/// One finding per key, with the locations of every duplicate: several roots
+/// can report the same file (nested worktrees), and osv-scanner reports a
+/// package once per lockfile.
+fn merge_duplicates(findings: Vec<Finding>) -> Vec<Finding> {
+    let mut merged: Vec<Finding> = Vec::with_capacity(findings.len());
+    let mut index: HashMap<String, usize> = HashMap::new();
+    for f in findings {
+        match index.get(&f.key) {
+            Some(&i) => {
+                for l in f.locations {
+                    if !merged[i].locations.contains(&l) {
+                        merged[i].locations.push(l);
+                    }
+                }
+            }
+            None => {
+                index.insert(f.key.clone(), merged.len());
+                merged.push(f);
+            }
+        }
+    }
+    merged
+}
+
+pub fn parse(format: ExternalFormat, out: &str, root: Option<&Path>) -> Result<Report> {
     match format {
-        "lenstica" | "cooldown" => Ok(serde_json::from_str(out)?),
-        "gitleaks" => gitleaks(out, root),
-        "osv-scanner" => osv_scanner(out),
-        "trufflehog" => trufflehog(out),
-        other => bail!("unknown format `{other}`"),
+        ExternalFormat::Lenstica => Ok(serde_json::from_str(out)?),
+        ExternalFormat::Gitleaks => gitleaks(out, root),
+        ExternalFormat::OsvScanner => osv_scanner(out, root),
+        ExternalFormat::Trufflehog => trufflehog(out, root),
     }
 }
 
@@ -129,9 +151,9 @@ fn s<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
-fn file_location(file: &str, root: Option<&std::path::Path>, line: Option<u32>) -> Location {
+fn file_location(file: &str, root: Option<&Path>, line: Option<u32>) -> Location {
     let path = match root {
-        Some(r) if !std::path::Path::new(file).is_absolute() => r.join(file),
+        Some(r) if !Path::new(file).is_absolute() => r.join(file),
         _ => PathBuf::from(file),
     };
     Location {
@@ -141,7 +163,7 @@ fn file_location(file: &str, root: Option<&std::path::Path>, line: Option<u32>) 
     }
 }
 
-fn gitleaks(out: &str, root: Option<&std::path::Path>) -> Result<Report> {
+fn gitleaks(out: &str, root: Option<&Path>) -> Result<Report> {
     let items: Vec<Value> =
         serde_json::from_str(out.trim()).context("gitleaks report is not a JSON array")?;
     let findings = items
@@ -165,7 +187,7 @@ fn gitleaks(out: &str, root: Option<&std::path::Path>) -> Result<Report> {
     })
 }
 
-fn osv_scanner(out: &str) -> Result<Report> {
+fn osv_scanner(out: &str, root: Option<&Path>) -> Result<Report> {
     let doc: Value = serde_json::from_str(out).context("osv-scanner report is not JSON")?;
     let mut findings = Vec::new();
     for result in doc
@@ -174,19 +196,18 @@ fn osv_scanner(out: &str) -> Result<Report> {
         .into_iter()
         .flatten()
     {
-        let source = result.get("source").map(|x| s(x, "path")).unwrap_or("");
+        let source = result.get("source").map_or("", |x| s(x, "path"));
         for p in result
             .get("packages")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
         {
-            let pkg = p.get("package").cloned().unwrap_or_default();
-            let vulns: Vec<&Value> = p
+            let pkg = p.get("package").unwrap_or(&Value::Null);
+            let vulns = p
                 .get("vulnerabilities")
                 .and_then(Value::as_array)
-                .map(|v| v.iter().collect())
-                .unwrap_or_default();
+                .map_or(&[][..], Vec::as_slice);
             if vulns.is_empty() {
                 continue;
             }
@@ -200,7 +221,7 @@ fn osv_scanner(out: &str) -> Result<Report> {
                 })
                 .max()
                 .unwrap_or(Severity::Medium);
-            let (name, version, eco) = (s(&pkg, "name"), s(&pkg, "version"), s(&pkg, "ecosystem"));
+            let (name, version, eco) = (s(pkg, "name"), s(pkg, "version"), s(pkg, "ecosystem"));
             findings.push(
                 Finding::new(
                     format!(
@@ -222,7 +243,7 @@ fn osv_scanner(out: &str) -> Result<Report> {
                         .collect::<Vec<_>>()
                         .join("\n"),
                 )
-                .at(file_location(source, None, None)),
+                .at(file_location(source, root, None)),
             );
         }
     }
@@ -232,19 +253,19 @@ fn osv_scanner(out: &str) -> Result<Report> {
     })
 }
 
-fn trufflehog(out: &str) -> Result<Report> {
+fn trufflehog(out: &str, root: Option<&Path>) -> Result<Report> {
     let mut findings = Vec::new();
     for line in out.lines().filter(|l| l.trim_start().starts_with('{')) {
         let v: Value = serde_json::from_str(line).context("trufflehog line is not JSON")?;
         let fs = v.pointer("/SourceMetadata/Data/Filesystem");
-        let file = fs.map(|f| s(f, "file")).unwrap_or("");
+        let file = fs.map_or("", |f| s(f, "file"));
         let line_no = fs
             .and_then(|f| f.get("line"))
             .and_then(Value::as_u64)
             .map(|n| n as u32);
         let verified = v.get("Verified").and_then(Value::as_bool).unwrap_or(false);
         let detector = s(&v, "DetectorName");
-        let loc = file_location(file, None, line_no);
+        let loc = file_location(file, root, line_no);
         findings.push(
             Finding::new(
                 format!("{detector}|{}|{}", loc.label, line_no.unwrap_or(0)),
@@ -283,16 +304,16 @@ mod tests {
     fn adapters_drop_secret_values() {
         let gl = r#"[{"Description":"AWS Access Key","File":"app/.env","StartLine":3,"RuleID":"aws-access-token",
             "Secret":"AKIAABCDEFGHIJKLMNOP","Match":"KEY=AKIAABCDEFGHIJKLMNOP"}]"#;
-        let r = parse("gitleaks", gl, Some(std::path::Path::new("/repo"))).unwrap();
+        let r = parse(ExternalFormat::Gitleaks, gl, Some(Path::new("/repo"))).unwrap();
         let json = serde_json::to_string(&r).unwrap();
         assert!(!json.contains("AKIAABCDEFGHIJKLMNOP"), "{json}");
         assert_eq!(
             r.findings[0].locations[0].path.as_deref(),
-            Some(std::path::Path::new("/repo/app/.env"))
+            Some(Path::new("/repo/app/.env"))
         );
 
         let th = r#"{"SourceMetadata":{"Data":{"Filesystem":{"file":"/x/.env","line":2}}},"DetectorName":"Github","Verified":true,"Raw":"ghp_secretvalue"}"#;
-        let r = parse("trufflehog", th, None).unwrap();
+        let r = parse(ExternalFormat::Trufflehog, th, None).unwrap();
         assert_eq!(r.findings[0].severity, Severity::Critical);
         assert!(
             !serde_json::to_string(&r)
@@ -302,7 +323,7 @@ mod tests {
 
         let osv = r#"{"results":[{"source":{"path":"/x/package-lock.json"},"packages":[{"package":{"name":"evil","version":"1.0.0","ecosystem":"npm"},
             "vulnerabilities":[{"id":"MAL-2025-9","summary":"Malicious code"}]}]}]}"#;
-        let r = parse("osv-scanner", osv, None).unwrap();
+        let r = parse(ExternalFormat::OsvScanner, osv, None).unwrap();
         assert_eq!(
             (r.findings[0].category.as_str(), r.findings[0].severity),
             ("malware", Severity::Critical)
@@ -310,7 +331,7 @@ mod tests {
 
         let own = r#"{"summary":"ok","findings":[{"key":"k","severity":"low","category":"settings","title":"t"}]}"#;
         assert_eq!(
-            parse("lenstica", own, None).unwrap().findings[0].severity,
+            parse(ExternalFormat::Lenstica, own, None).unwrap().findings[0].severity,
             Severity::Low
         );
     }

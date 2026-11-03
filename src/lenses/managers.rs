@@ -21,11 +21,10 @@ fn title(m: &ManagerStatus, days: u32) -> String {
             m.name,
             m.current_age.as_deref().unwrap_or("too")
         ),
-        State::Outdated => format!(
-            "{} {} is too old to enforce a cooldown",
-            m.name,
-            m.version.as_deref().unwrap_or("")
-        ),
+        State::Outdated => match m.version.as_deref() {
+            Some(v) => format!("{} {v} is too old to enforce a cooldown", m.name),
+            None => format!("{} is too old to enforce a cooldown", m.name),
+        },
         State::Error => format!("Cannot read {}'s minimum release age", m.name),
         State::Ok | State::Stronger => format!("{} is fine", m.name),
     }
@@ -45,9 +44,9 @@ fn finding(m: &ManagerStatus, days: u32) -> Finding {
     };
     let mut f = Finding::new(
         format!(
-            "{}|{:?}|{}",
+            "{}|{}|{}",
             m.id,
-            m.state,
+            m.state.key(),
             m.current.as_deref().unwrap_or("")
         ),
         severity,
@@ -67,7 +66,7 @@ fn finding(m: &ManagerStatus, days: u32) -> Finding {
 fn describe_fix(
     before: Option<&ManagerStatus>,
     name: &str,
-    from: &Option<String>,
+    from: Option<&str>,
     to: &str,
     days: u32,
 ) -> String {
@@ -83,10 +82,7 @@ fn describe_fix(
 /// Announce package managers that appeared since the last run.
 fn new_arrivals(cx: &Context, present: &[(String, String)]) -> Vec<String> {
     let path = cx.state_dir.join("seen.json");
-    let seen: Option<BTreeSet<String>> = files::read_optional(&path)
-        .ok()
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok());
+    let seen: Option<BTreeSet<String>> = files::read_json(&path);
     let now: BTreeSet<String> = present.iter().map(|(id, _)| id.clone()).collect();
     if let Ok(json) = serde_json::to_string(&now) {
         let _ = files::write_state(&path, &json);
@@ -122,7 +118,7 @@ impl Lens for Managers {
                     actions.push(describe_fix(
                         found.iter().find(|m| m.id == o.id),
                         o.name,
-                        from,
+                        from.as_deref(),
                         to,
                         cfg.min_days,
                     ));
@@ -189,7 +185,9 @@ impl Lens for Managers {
                     .then(|| format!("Not installed: {}", not_installed.join(", "))),
             )
             .collect();
-        let summary = if ok == found.len() {
+        let summary = if found.is_empty() {
+            "No package manager found".to_string()
+        } else if ok == found.len() {
             format!(
                 "All {} package managers hold back versions newer than {} days",
                 found.len(),

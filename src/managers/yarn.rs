@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::{Ctx, Gate, Manager, Tool};
+use super::{Ctx, Gate, Manager, Tool, default_gate};
 use crate::duration::MINUTE;
 use crate::files;
 use crate::paths;
@@ -41,8 +41,9 @@ impl Manager for Yarn {
     fn bare_unit(&self) -> i64 {
         MINUTE
     }
-    fn target(&self, days: u32) -> String {
-        (u64::from(days) * 24 * 60).to_string()
+    /// Minutes, or (Yarn 4.11+) a duration string; each project runs its own Yarn.
+    fn accepts(&self, _raw: &str) -> bool {
+        true
     }
     fn location(&self, _tool: &Tool) -> PathBuf {
         rc_path()
@@ -52,9 +53,7 @@ impl Manager for Yarn {
             Some(v) if v.major < 2 => Gate::Note(
                 "global yarn is Yarn Classic, which has no age gate; projects on Yarn 4.10+ still read this".to_string(),
             ),
-            Some(v) if v < self.min_version() => Gate::TooOld,
-            Some(_) => Gate::Supported,
-            None => Gate::Note("version could not be determined".to_string()),
+            other => default_gate(self.min_version(), other),
         }
     }
     fn read(&self, _tool: &Tool, _ctx: &Ctx) -> Result<Option<String>> {

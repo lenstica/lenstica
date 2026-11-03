@@ -5,7 +5,7 @@ use serde_json::Value;
 use super::Source;
 use super::lockfiles::{Ecosystem, Locked, Pkg};
 use crate::exec;
-use crate::managers::Ctx;
+use crate::managers::{self, Ctx};
 
 fn locked(eco: Ecosystem, name: &str, version: &str) -> Option<Locked> {
     let version = version.trim().trim_start_matches('v');
@@ -16,15 +16,25 @@ fn locked(eco: Ecosystem, name: &str, version: &str) -> Option<Locked> {
             version: version.to_string(),
         },
         published: None,
+        public: true,
     })
 }
 
+/// Globally installed npm packages; `npm link`ed and `file:` ones are local
+/// code whose names must not be looked up in the registry.
 fn deps(value: &Value) -> Vec<Locked> {
     value
         .get("dependencies")
         .and_then(Value::as_object)
         .map(|deps| {
             deps.iter()
+                .filter(|(_, d)| {
+                    let local = d
+                        .get("resolved")
+                        .and_then(Value::as_str)
+                        .is_some_and(|r| r.starts_with("file:") || r.starts_with("link:"));
+                    !local && d.get("link").and_then(Value::as_bool) != Some(true)
+                })
                 .filter_map(|(name, d)| locked(Ecosystem::Npm, name, d.get("version")?.as_str()?))
                 .collect()
         })
@@ -35,13 +45,13 @@ fn run_json(bin: &str, args: &[&str], ctx: &Ctx, errors: &mut Vec<String>) -> Op
     let path = exec::find(bin, &ctx.search)?;
     match exec::run(&path, args, &ctx.search) {
         // `npm ls` exits 1 for extraneous or invalid trees but still prints the full JSON.
-        Ok(out) => match serde_json::from_str(&out.stdout) {
-            Ok(v) => Some(v),
-            Err(_) => {
+        Ok(out) => {
+            let parsed = serde_json::from_str(&out.stdout).ok();
+            if parsed.is_none() {
                 errors.push(format!("`{bin} {}`: {}", args.join(" "), out.error_text()));
-                None
             }
-        },
+            parsed
+        }
         Err(e) => {
             errors.push(format!("{e:#}"));
             None
@@ -90,11 +100,15 @@ pub fn collect(ctx: &Ctx, errors: &mut Vec<String>) -> Vec<Source> {
             Err(e) => errors.push(format!("{e:#}")),
         }
     }
-    let pip = if exec::find("pip3", &ctx.search).is_some() {
-        "pip3"
-    } else {
-        "pip"
-    };
+    // The same pip the package-manager check uses.
+    let pip = managers::by_id("pip")
+        .and_then(|m| {
+            m.binaries()
+                .iter()
+                .copied()
+                .find(|b| exec::find(b, &ctx.search).is_some())
+        })
+        .unwrap_or("pip");
     if let Some(Value::Array(items)) =
         run_json(pip, &["list", "--user", "--format=json"], ctx, errors)
     {

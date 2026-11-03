@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The Lenstica window: listen for state and toast events. App commands (`action`) are allowed by default.",
+  "description": "The Lenstica window: listen for state and toast events. The app's own commands (`action`, `get_state`, `list_repos`) are allowed by default.",
   "windows": ["main"],
   "permissions": ["core:default"]
 }

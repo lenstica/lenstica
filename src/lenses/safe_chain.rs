@@ -41,8 +41,7 @@ fn startup_files(cx: &Context) -> Vec<(&'static str, PathBuf)> {
     let home = paths::home();
     let zdotdir = std::env::var_os("ZDOTDIR")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.clone());
+        .map_or_else(|| home.clone(), PathBuf::from);
     let candidates = [
         ("zsh", "zsh", zdotdir.join(".zshrc")),
         ("bash", "bash", home.join(".bashrc")),

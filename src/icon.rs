@@ -8,6 +8,9 @@
 //! their trays may be light or dark, so normal icons are drawn in a blue that
 //! reads on both.
 
+use std::collections::HashMap;
+use std::sync::{Mutex, PoisonError};
+
 use resvg::{tiny_skia, usvg};
 
 /// Canvas size in pixels. Tauri's tray (tray-icon 0.25) always draws the image
@@ -66,7 +69,7 @@ pub const MENU_SIZE: u32 = 36;
 
 /// A coloured icon for a menu item. Colours are mid-tones that read on light
 /// and dark menus alike.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum MenuIcon {
     Severity(lenstica_lens::Severity),
     /// A lens with nothing needing attention.
@@ -93,7 +96,7 @@ fn severity_color(s: lenstica_lens::Severity) -> &'static str {
 
 /// The severity's Lucide icon: a filled octagon for critical, a triangle for high,
 /// a circle for medium, `i` for low and a dot for info.
-pub fn severity_svg(s: lenstica_lens::Severity) -> &'static str {
+fn severity_svg(s: lenstica_lens::Severity) -> &'static str {
     use lenstica_lens::Severity::*;
     match s {
         Critical => include_str!("../assets/lucide/octagon-alert-filled.svg"),
@@ -110,7 +113,19 @@ fn dot(fill: &str, stroke: &str) -> String {
     )
 }
 
+/// The pixels of a menu icon. Rendered once per icon: the menu is rebuilt
+/// with every result, and holds hundreds of them.
 pub fn menu_rgba(icon: MenuIcon) -> Vec<u8> {
+    static CACHE: Mutex<Option<HashMap<MenuIcon, Vec<u8>>>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    cache
+        .get_or_insert_with(HashMap::new)
+        .entry(icon)
+        .or_insert_with(|| render_menu_icon(icon))
+        .clone()
+}
+
+fn render_menu_icon(icon: MenuIcon) -> Vec<u8> {
     let (svg, scale) = match icon {
         MenuIcon::Severity(s) => (
             severity_svg(s)

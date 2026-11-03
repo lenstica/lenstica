@@ -48,8 +48,7 @@ pub async fn list_repos() -> Result<Value, String> {
 
 #[tauri::command]
 pub fn action(app: AppHandle, msg: Value) -> Result<(), String> {
-    // `LENSTICA_DEBUG=1` logs what the window asks for.
-    if std::env::var_os("LENSTICA_DEBUG").is_some_and(|v| v != "0") {
+    if super::debug() {
         eprintln!("lenstica window: {msg}");
     }
     handle(&app, &msg).map_err(|e| format!("{e:#}"))
@@ -64,7 +63,10 @@ fn str_field<'a>(v: &'a Value, key: &str) -> Result<&'a str> {
 fn toml_value(v: &Value) -> Result<toml_edit::Value> {
     Ok(match v {
         Value::Bool(b) => (*b).into(),
-        Value::Number(n) if n.is_i64() => n.as_i64().unwrap_or_default().into(),
+        Value::Number(n) => n
+            .as_i64()
+            .context("settings take whole numbers only")?
+            .into(),
         Value::String(s) => s.as_str().into(),
         Value::Array(items) => {
             let mut array = toml_edit::Array::new();
@@ -101,10 +103,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             }
         }
         "openUrl" => system::open_url(str_field(msg, "url")?)?,
-        "openConfig" => {
-            Config::load()?;
-            system::open(&config::path())?;
-        }
+        "openConfig" => system::open(&config::ensure_exists()?)?,
         "ignorePackage" => {
             let entry = str_field(msg, "entry")?;
             config::add_to_list(&["audit", "ignore"], entry)?;
@@ -126,8 +125,12 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
                 .and_then(Value::as_array)
                 .context("missing `path`")?
                 .iter()
-                .filter_map(|p| p.as_str().map(String::from))
-                .collect();
+                .map(|p| {
+                    p.as_str()
+                        .map(String::from)
+                        .context("`path` holds text only")
+                })
+                .collect::<Result<_>>()?;
             let keys: Vec<&str> = path.iter().map(String::as_str).collect();
             config::set_value(
                 &keys,
@@ -189,7 +192,8 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             if msg.get("enabled").and_then(Value::as_bool) == Some(true) {
                 autostart::install(Kind::Tray, false)?;
             } else {
-                autostart::uninstall()?;
+                // Not stopped: the running app is the one whose switch was turned off.
+                autostart::uninstall(false)?;
             }
             super::refresh(app);
         }

@@ -75,16 +75,11 @@ fn plist_path() -> PathBuf {
         .join(format!("{LABEL}.plist"))
 }
 
+/// The launchd domain of the logged-in user's session: `gui/<uid>`.
 #[cfg(target_os = "macos")]
-fn gui_domain() -> Result<String> {
-    let out = Command::new("id")
-        .arg("-u")
-        .output()
-        .context("cannot run id -u")?;
-    Ok(format!(
-        "gui/{}",
-        String::from_utf8_lossy(&out.stdout).trim()
-    ))
+pub(crate) fn gui_domain() -> String {
+    // SAFETY: getuid has no preconditions and cannot fail.
+    format!("gui/{}", unsafe { libc::getuid() })
 }
 
 #[cfg(target_os = "macos")]
@@ -149,7 +144,7 @@ pub fn install(kind: Kind, start_now: bool) -> Result<PathBuf> {
     let path = plist_path();
     files::write_state(&path, &plist)?;
     if start_now {
-        let domain = gui_domain()?;
+        let domain = gui_domain();
         // Not loaded yet is the normal case for a first install.
         let _ = Command::new("launchctl")
             .args(["bootout", &format!("{domain}/{LABEL}")])
@@ -163,17 +158,20 @@ pub fn install(kind: Kind, start_now: bool) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// Remove the login item. With `stop`, also stop the process it started:
+/// not wanted when that process is the one asking (the window's switch).
 #[cfg(target_os = "macos")]
-pub fn uninstall() -> Result<Vec<PathBuf>> {
+pub fn uninstall(stop: bool) -> Result<Vec<PathBuf>> {
     let path = plist_path();
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let domain = gui_domain()?;
-    // bootout also stops the running agent; it fails harmlessly when it is not loaded.
-    let _ = Command::new("launchctl")
-        .args(["bootout", &format!("{domain}/{LABEL}")])
-        .output();
+    if stop {
+        // bootout stops the running agent; it fails harmlessly when it is not loaded.
+        let _ = Command::new("launchctl")
+            .args(["bootout", &format!("{}/{LABEL}", gui_domain())])
+            .output();
+    }
     std::fs::remove_file(&path).with_context(|| format!("cannot remove {}", path.display()))?;
     Ok(vec![path])
 }
@@ -201,9 +199,45 @@ fn unit_path() -> PathBuf {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
+fn remove_unit(stop: bool) -> Result<Option<PathBuf>> {
+    let unit = unit_path();
+    if !unit.exists() {
+        return Ok(None);
+    }
+    let mut disable = Command::new("systemctl");
+    disable.args(["--user", "disable"]);
+    if stop {
+        disable.arg("--now");
+    }
+    let _ = disable.arg("lenstica.service").output();
+    std::fs::remove_file(&unit).with_context(|| format!("cannot remove {}", unit.display()))?;
+    let _ = Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .output();
+    Ok(Some(unit))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn remove_desktop_entry() -> Result<Option<PathBuf>> {
+    let desktop = desktop_path();
+    if !desktop.exists() {
+        return Ok(None);
+    }
+    std::fs::remove_file(&desktop)
+        .with_context(|| format!("cannot remove {}", desktop.display()))?;
+    Ok(Some(desktop))
+}
+
+/// One login item at a time: installing one kind removes the other, which
+/// would otherwise start a second monitor that cannot get the lock.
+#[cfg(all(unix, not(target_os = "macos")))]
 pub fn install(kind: Kind, start_now: bool) -> Result<PathBuf> {
     let exe = executable()?;
     let exe_str = exe.to_string_lossy();
+    match kind {
+        Kind::Tray => remove_unit(start_now)?,
+        Kind::Headless => remove_desktop_entry()?,
+    };
     match kind {
         Kind::Tray => {
             let path = desktop_path();
@@ -244,26 +278,11 @@ pub fn install(kind: Kind, start_now: bool) -> Result<PathBuf> {
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
-pub fn uninstall() -> Result<Vec<PathBuf>> {
-    let mut removed = Vec::new();
-    let unit = unit_path();
-    if unit.exists() {
-        let _ = Command::new("systemctl")
-            .args(["--user", "disable", "--now", "lenstica.service"])
-            .output();
-        std::fs::remove_file(&unit).with_context(|| format!("cannot remove {}", unit.display()))?;
-        let _ = Command::new("systemctl")
-            .args(["--user", "daemon-reload"])
-            .output();
-        removed.push(unit);
-    }
-    let desktop = desktop_path();
-    if desktop.exists() {
-        std::fs::remove_file(&desktop)
-            .with_context(|| format!("cannot remove {}", desktop.display()))?;
-        removed.push(desktop);
-    }
-    Ok(removed)
+pub fn uninstall(stop: bool) -> Result<Vec<PathBuf>> {
+    Ok([remove_unit(stop)?, remove_desktop_entry()?]
+        .into_iter()
+        .flatten()
+        .collect())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -276,7 +295,7 @@ pub fn installed() -> Option<PathBuf> {
 // ---- Windows ----------------------------------------------------------------
 
 #[cfg(windows)]
-const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+pub(crate) const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 #[cfg(windows)]
 pub fn install(kind: Kind, start_now: bool) -> Result<PathBuf> {
@@ -297,8 +316,9 @@ pub fn install(kind: Kind, start_now: bool) -> Result<PathBuf> {
     Ok(PathBuf::from(format!(r"{RUN_KEY}\Lenstica")))
 }
 
+/// The Run key starts the app at the next login only; `stop` has nothing to stop.
 #[cfg(windows)]
-pub fn uninstall() -> Result<Vec<PathBuf>> {
+pub fn uninstall(_stop: bool) -> Result<Vec<PathBuf>> {
     if installed().is_none() {
         return Ok(Vec::new());
     }

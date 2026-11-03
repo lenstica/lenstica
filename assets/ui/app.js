@@ -3,7 +3,8 @@ const SEV = ["info", "low", "medium", "high", "critical"];
 const rank = s => SEV.indexOf(s);
 const CATEGORIES = {
   malware: "Malware", vulnerability: "Vulnerabilities", secret: "Exposed secrets",
-  lenstica: "Lenstica", deprecated: "Deprecated", agent: "AI agent instructions", settings: "Settings",
+  cooldown: "Cooldown", deprecated: "Deprecated", agent: "AI agent instructions", settings: "Settings",
+  telemetry: "Telemetry",
 };
 const DEP_KINDS = ["vuln", "malware", "telemetry", "too-new", "locked-young", "deprecated", "yanked"];
 const PAGES = ["overview", "findings", "lenses", "settings"];
@@ -206,7 +207,7 @@ function detail(f) {
   ];
 }
 
-function checkersPage() {
+function lensesPage() {
   const cards = ui.state.lenses.map(c => {
     const r = c.result;
     return h("div", { class: "card lens" },
@@ -424,9 +425,13 @@ function render() {
   document.getElementById("foot").textContent = `v${ui.state.version}`;
   const main = document.getElementById("main");
   const scroll = main.scrollTop;
-  const pages = { overview, findings: findingsPage, lenses: checkersPage, settings: settingsPage };
+  const pages = { overview, findings: findingsPage, lenses: lensesPage, settings: settingsPage };
+  // A broken settings file is shown on every page: Lenstica runs on its last good settings meanwhile.
+  const banner = ui.state.configError && h("div", { class: "banner" },
+    `The settings file has an error, so Lenstica is using its defaults or last good settings: ${ui.state.configError}`,
+    h("button", { class: "btn small", onclick: () => post({ type: "openConfig" }) }, "Open settings file"));
   // Pages return elements, possibly nested in arrays; never let an array reach the DOM as text.
-  main.replaceChildren(...[pages[ui.page]()].flat(Infinity).filter(Boolean));
+  main.replaceChildren(...[banner, pages[ui.page]()].flat(Infinity).filter(Boolean));
   main.scrollTop = scroll;
   if (ui.scrollToSelected) {
     ui.scrollToSelected = false;

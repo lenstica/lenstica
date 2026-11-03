@@ -1,5 +1,6 @@
 //! Locked and installed packages younger than the cooldown.
 
+use super::shared::plural;
 use anyhow::Result;
 use lenstica_lens::{Context, Finding, Lens, Report, Severity};
 
@@ -9,10 +10,6 @@ use crate::config::Config;
 use crate::managers::Ctx;
 
 pub struct PackageAge;
-
-fn plural(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
-}
 
 impl Lens for PackageAge {
     fn id(&self) -> &str {
@@ -74,12 +71,7 @@ impl Lens for PackageAge {
                 ))
                 .remedy(remedy);
                 for &i in &f.sources {
-                    let s = &sources[i];
-                    finding = finding.at(lenstica_lens::Location {
-                        label: s.label.clone(),
-                        path: s.path.clone(),
-                        line: None,
-                    });
+                    finding = finding.at(sources[i].location());
                 }
                 finding
             })

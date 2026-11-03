@@ -30,8 +30,10 @@ use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::shared::plural;
+use crate::audit;
 use crate::audit::lockfiles::{Ecosystem, Pkg};
-use crate::audit::registry::Cache as RegistryCache;
+use crate::audit::registry::{Cache as RegistryCache, RETRY_AFTER_SECS};
 use crate::config::Config;
 use crate::duration::humanize;
 use crate::exec;
@@ -44,7 +46,6 @@ use crate::version::Version;
 pub struct SoftwareAge;
 
 /// Don't re-ask about something that could not be dated for this long.
-const RETRY_AFTER_SECS: i64 = 24 * 3600;
 const GHCR_ACCEPT: &str = "Accept: application/vnd.oci.image.index.v1+json";
 /// ghcr.io's anonymous token for public images, as `brew` itself sends it.
 const GHCR_AUTH: &str = "Authorization: Bearer QQ==";
@@ -105,11 +106,7 @@ impl Cache {
     }
 
     fn load(dir: &Path) -> Self {
-        files::read_optional(&Self::path(dir))
-            .ok()
-            .flatten()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        files::read_json(&Self::path(dir)).unwrap_or_default()
     }
 
     fn save(&self, dir: &Path) -> Result<()> {
@@ -168,6 +165,7 @@ fn end_of_day(raw: &str) -> Option<DateTime<Utc>> {
 fn brew_prefixes() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let candidates = std::env::var_os("HOMEBREW_PREFIX")
+        .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .into_iter()
         .chain([
@@ -228,10 +226,7 @@ fn formulae(prefix: &Path, skipped: &mut usize) -> Vec<Item> {
         let name = file_name(&formula);
         for keg in subdirs(&formula) {
             let tag = file_name(&keg);
-            let receipt: Option<Value> = files::read_optional(&keg.join("INSTALL_RECEIPT.json"))
-                .ok()
-                .flatten()
-                .and_then(|s| serde_json::from_str(&s).ok());
+            let receipt: Option<Value> = files::read_json(&keg.join("INSTALL_RECEIPT.json"));
             let tap = receipt
                 .as_ref()
                 .and_then(|r| r.pointer("/source/tap"))
@@ -242,7 +237,11 @@ fn formulae(prefix: &Path, skipped: &mut usize) -> Vec<Item> {
                 continue;
             }
             // `1.2.3_1` is revision 1 of version 1.2.3; the bottle tag keeps it.
-            let version = tag.split('_').next().unwrap_or(&tag).to_string();
+            let version = tag
+                .rsplit_once('_')
+                .filter(|(_, revision)| revision.parse::<u32>().is_ok())
+                .map_or(tag.as_str(), |(v, _)| v)
+                .to_string();
             out.push(Item {
                 kind: "brew",
                 what: "Homebrew formula",
@@ -266,10 +265,7 @@ fn casks(prefix: &Path, skipped: &mut usize) -> Vec<Item> {
     let mut out = Vec::new();
     for cask in subdirs(&prefix.join("Caskroom")) {
         let token = file_name(&cask);
-        let tap = files::read_optional(&cask.join(".metadata/INSTALL_RECEIPT.json"))
-            .ok()
-            .flatten()
-            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+        let tap = files::read_json::<Value>(&cask.join(".metadata/INSTALL_RECEIPT.json"))
             .and_then(|r| Some(r.pointer("/source/tap")?.as_str()?.to_string()));
         if tap.as_deref().is_some_and(|t| t != "homebrew/cask") {
             *skipped += 1;
@@ -295,31 +291,10 @@ fn casks(prefix: &Path, skipped: &mut usize) -> Vec<Item> {
     out
 }
 
-fn manifest_value(src: &str, section: Option<&str>, key: &str) -> Option<String> {
-    let mut current: Option<String> = None;
-    for line in src.lines() {
-        let line = line.trim();
-        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            current = Some(name.trim().to_string());
-            continue;
-        }
-        if current.as_deref() != section {
-            continue;
-        }
-        if let Some((k, v)) = line.split_once('=')
-            && k.trim() == key
-        {
-            return Some(v.trim().trim_matches('"').to_string());
-        }
-    }
-    None
-}
-
 fn rustup_home() -> PathBuf {
     std::env::var_os("RUSTUP_HOME")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| paths::home().join(".rustup"))
+        .map_or_else(|| paths::home().join(".rustup"), PathBuf::from)
 }
 
 /// Stable toolchains installed with rustup, dated by their local release
@@ -333,8 +308,8 @@ fn rust_toolchains(skipped: &mut usize) -> Vec<Item> {
             continue;
         };
         let (Some(date), Some(version)) = (
-            manifest_value(&src, None, "date").and_then(|d| end_of_day(&d)),
-            manifest_value(&src, Some("pkg.rust"), "version"),
+            files::ini_get(&src, None, "date").and_then(|d| end_of_day(&d)),
+            files::ini_get(&src, Some("pkg.rust"), "version"),
         ) else {
             continue;
         };
@@ -376,32 +351,33 @@ fn registry_package(id: &str, version: Version) -> Option<(Ecosystem, &'static s
 /// The package managers themselves, and Node.js. A binary from Homebrew is
 /// left to the Homebrew check, and rustup's `cargo` to the toolchain check.
 fn tools(cfg: &Config, ctx: &Ctx, by_brew: bool, by_rustup: bool) -> Vec<Item> {
-    let mut found: Vec<(&'static str, &'static str, PathBuf, Version)> = Vec::new();
+    // (id, name, binary, version, the version as the tool wrote it)
+    let mut found: Vec<(&'static str, &'static str, PathBuf, Version, String)> = Vec::new();
     if cfg.software.package_managers {
         for m in managers::all()
             .into_iter()
             .filter(|m| cfg.is_enabled(m.id()))
         {
             if let Some(tool) = managers::locate(m, ctx)
-                && let Some(v) = tool.version
+                && let (Some(v), Some(text)) = (tool.version, tool.version_text)
             {
-                found.push((m.id(), m.name(), tool.bin, v));
+                found.push((m.id(), m.name(), tool.bin, v, text));
             }
         }
         if let Some(bin) = exec::find("deno", &ctx.search)
-            && let Some(v) = exec::version_of(&bin, &ctx.search)
+            && let Some((v, text)) = exec::version_text_of(&bin, &ctx.search)
         {
-            found.push(("deno", "Deno", bin, v));
+            found.push(("deno", "Deno", bin, v, text));
         }
     }
     if cfg.software.node
         && let Some(bin) = exec::find("node", &ctx.search)
-        && let Some(v) = exec::version_of(&bin, &ctx.search)
+        && let Some((v, text)) = exec::version_text_of(&bin, &ctx.search)
     {
-        found.push(("node", "Node.js", bin, v));
+        found.push(("node", "Node.js", bin, v, text));
     }
     let mut out = Vec::new();
-    for (id, name, bin, version) in found {
+    for (id, name, bin, version, text) in found {
         if by_brew && is_from_homebrew(&bin) {
             continue;
         }
@@ -413,16 +389,19 @@ fn tools(cfg: &Config, ctx: &Ctx, by_brew: bool, by_rustup: bool) -> Vec<Item> {
                 "package manager"
             },
             name: name.to_string(),
-            version: version.to_string(),
+            version: text.clone(),
             lookup,
             path: bin.clone(),
             source,
         };
         match id {
             "cargo" => {
-                let proxy = fs::canonicalize(&bin)
-                    .ok()
-                    .is_some_and(|p| file_name(&p).starts_with("rustup"));
+                // rustup's proxies are hard links (or symlinks) next to rustup itself.
+                let rustup = format!("rustup{}", std::env::consts::EXE_SUFFIX);
+                let proxy = bin.parent().is_some_and(|d| d.join(&rustup).exists())
+                    || fs::canonicalize(&bin)
+                        .ok()
+                        .is_some_and(|p| file_name(&p).starts_with("rustup"));
                 if !(by_rustup && proxy) {
                     out.push(item(
                         "rust",
@@ -449,7 +428,7 @@ fn tools(cfg: &Config, ctx: &Ctx, by_brew: bool, by_rustup: bool) -> Vec<Item> {
                     Lookup::Registry(Pkg {
                         eco,
                         name: package.to_string(),
-                        version: version.to_string(),
+                        version: text.clone(),
                     }),
                     source,
                 ));
@@ -483,7 +462,7 @@ fn date_each(
     (ctx, dir, cache): (&Ctx, &Path, &mut Cache),
     problems: &mut Vec<String>,
 ) {
-    let urls: Vec<String> = items.iter().map(|i| url(i)).collect();
+    let urls: Vec<String> = items.iter().map(|&i| url(i)).collect();
     match fetch(&urls, extra, ctx, dir) {
         Ok(bodies) => {
             for (item, body) in items.iter().zip(bodies) {
@@ -496,7 +475,13 @@ fn date_each(
 }
 
 /// Fetch every publish time the caches cannot answer; returns problems.
-fn fill(cfg: &Config, ctx: &Ctx, items: &[Item], cache: &mut Cache, dir: &Path) -> Vec<String> {
+fn fill(
+    cfg: &Config,
+    ctx: &Ctx,
+    items: &[Item],
+    (cache, registry): (&mut Cache, &mut RegistryCache),
+    dir: &Path,
+) -> Vec<String> {
     let now = ctx.now.timestamp();
     let mut problems = Vec::new();
 
@@ -508,11 +493,10 @@ fn fill(cfg: &Config, ctx: &Ctx, items: &[Item], cache: &mut Cache, dir: &Path) 
             _ => None,
         })
         .collect();
-    if !packages.is_empty() {
-        let mut registry = RegistryCache::load();
-        if let Err(e) = registry.fill(&packages, &cfg.audit, &ctx.search, ctx.now, None, false) {
-            problems.push(format!("package registries: {e:#}"));
-        }
+    if !packages.is_empty()
+        && let Err(e) = registry.fill(&packages, &cfg.audit, &ctx.search, ctx.now, None, false)
+    {
+        problems.push(format!("package registries: {e:#}"));
     }
 
     let pending = |cache: &Cache, want: fn(&Lookup) -> bool| -> Vec<&Item> {
@@ -532,19 +516,19 @@ fn fill(cfg: &Config, ctx: &Ctx, items: &[Item], cache: &mut Cache, dir: &Path) 
             _ => unreachable!("only bottles are pending here"),
         },
         &["--header", GHCR_ACCEPT, "--header", GHCR_AUTH],
-        |body| {
-            let doc: Value = serde_json::from_str(body).ok()?;
-            parse_time(
-                doc.pointer("/annotations/org.opencontainers.image.created")?
-                    .as_str()?,
-            )
-        },
+        bottle_created,
         (ctx, dir, cache),
         &mut problems,
     );
 
-    // A rebuilt bottle replaces the version's tag with `<tag>-<n>`: find it.
-    let rebuilt = pending(cache, |l| matches!(l, Lookup::Bottle { .. }));
+    // A rebuilt bottle replaces the version's tag with `<tag>-<n>`: find it
+    // for the bottles the first pass could not date. (They were just recorded
+    // as failed, so `pending` would no longer list them.)
+    let rebuilt: Vec<&Item> = bottles
+        .iter()
+        .copied()
+        .filter(|i| cache.get(&i.cache_key()).is_none())
+        .collect();
     let lists: Vec<String> = rebuilt
         .iter()
         .filter_map(|i| match &i.lookup {
@@ -597,7 +581,7 @@ fn fill(cfg: &Config, ctx: &Ctx, items: &[Item], cache: &mut Cache, dir: &Path) 
             )
         },
         &["--range", "0-511"],
-        |body| end_of_day(&manifest_value(body, None, "date")?),
+        |body| end_of_day(&files::ini_get(body, None, "date")?),
         (ctx, dir, cache),
         &mut problems,
     );
@@ -747,16 +731,11 @@ fn published(item: &Item, cache: &Cache, registry: &RegistryCache) -> Option<Dat
 }
 
 fn ignored(cfg: &Config, item: &Item) -> bool {
-    cfg.software
-        .ignore
-        .iter()
-        .chain(cfg.audit.ignore.iter())
-        .any(
-            |r| match r.rsplit_once('@').filter(|(n, _)| !n.is_empty()) {
-                Some((name, version)) => name == item.name && version == item.version,
-                None => *r == item.name,
-            },
-        )
+    audit::ignore_matches(
+        cfg.software.ignore.iter().chain(&cfg.audit.ignore),
+        &item.name,
+        &item.version,
+    )
 }
 
 fn remedy(item: &Item, days: u32) -> String {
@@ -830,11 +809,17 @@ impl Lens for SoftwareAge {
         watch.retain(|p| p.is_dir());
 
         let mut cache = Cache::load(&cx.state_dir);
+        let mut registry = RegistryCache::load();
         let mut problems = Vec::new();
         if !cx.offline {
-            problems = fill(&cfg, &ctx, &items, &mut cache, &cx.state_dir);
+            problems = fill(
+                &cfg,
+                &ctx,
+                &items,
+                (&mut cache, &mut registry),
+                &cx.state_dir,
+            );
         }
-        let registry = RegistryCache::load();
 
         let target = cfg.target_secs();
         let mut findings = Vec::new();
@@ -892,25 +877,25 @@ impl Lens for SoftwareAge {
         if other_taps > 0 {
             passing.push(format!(
                 "{} from other taps, or HEAD builds, not checked",
-                count(other_taps, "Homebrew install", "Homebrew installs")
+                plural(other_taps, "Homebrew install", "Homebrew installs")
             ));
         }
         if self_updating > 0 {
             passing.push(format!(
                 "{} update themselves inside the app, so Homebrew's version says nothing about what runs; not checked",
-                count(self_updating, "cask", "casks")
+                plural(self_updating, "cask", "casks")
             ));
         }
         if latest > 0 {
             passing.push(format!(
                 "{} with version :latest not checked",
-                count(latest, "cask", "casks")
+                plural(latest, "cask", "casks")
             ));
         }
         if prerelease > 0 {
             passing.push(format!(
                 "{} not checked",
-                count(
+                plural(
                     prerelease,
                     "nightly or beta Rust toolchain",
                     "nightly or beta Rust toolchains"
@@ -926,7 +911,7 @@ impl Lens for SoftwareAge {
         let summary = format!(
             "{} of {} installed programs published less than {} days ago",
             findings.len(),
-            items.len(),
+            items.len() - self_updating,
             cfg.min_days
         );
         Ok(Report {
@@ -937,10 +922,6 @@ impl Lens for SoftwareAge {
             ..Default::default()
         })
     }
-}
-
-fn count(n: usize, one: &str, many: &str) -> String {
-    format!("{n} {}", if n == 1 { one } else { many })
 }
 
 fn capitalise(s: &str) -> String {
@@ -975,11 +956,11 @@ mod tests {
     fn reads_rust_manifests_and_dates_whole_days_late() {
         let src = "manifest-version = \"2\"\ndate = \"2026-02-12\"\n\n[pkg.cargo]\nversion = \"0.94.0\"\n[pkg.rust]\nversion = \"1.93.1 (01f6ddf75 2026-02-11)\"\n";
         assert_eq!(
-            manifest_value(src, None, "date").as_deref(),
+            files::ini_get(src, None, "date").as_deref(),
             Some("2026-02-12")
         );
         assert_eq!(
-            manifest_value(src, Some("pkg.rust"), "version").as_deref(),
+            files::ini_get(src, Some("pkg.rust"), "version").as_deref(),
             Some("1.93.1 (01f6ddf75 2026-02-11)")
         );
         assert_eq!(

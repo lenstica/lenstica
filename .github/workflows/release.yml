@@ -2,13 +2,19 @@
 # cross-bundle (macOS signing tools, the Windows resource compiler and the
 # Linux system libraries are each only available natively).
 #
-# Push a tag like v0.2.0, or run it by hand; the bundles land on a draft release.
+# Push a tag like v0.2.0, or run it by hand for an existing tag; the bundles
+# land on a draft release. Actions are pinned to commits and the Tauri CLI to
+# a version at least 7 days old (SPEC principle 6).
 name: Release
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build, such as v0.2.0
+        required: true
 
 jobs:
   bundle:
@@ -28,9 +34,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
 
@@ -40,15 +48,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       - name: Tests
         run: cargo test --workspace
 
       - name: Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
+        run: cargo install tauri-cli --version "=2.12.4" --locked
 
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Skips the Finder window layout step of the .dmg, which needs a GUI session.
@@ -56,6 +64,6 @@ jobs:
         with:
           tauriScript: cargo tauri
           args: --target ${{ matrix.target }}
-          tagName: ${{ github.ref_name }}
-          releaseName: Lenstica ${{ github.ref_name }}
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: Lenstica ${{ inputs.tag || github.ref_name }}
           releaseDraft: true

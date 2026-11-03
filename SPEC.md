@@ -533,6 +533,7 @@ Newest last. Dates are when the work landed in the local build.
 | 2026-11-02 | Renamed to **Lenstica** (checkers are now lenses); new logo; licence changed to Apache 2.0; settings, results and login item migrate automatically; this spec |
 | 2026-11-02 | Published to github.com/lenstica/lenstica (public, Apache 2.0) |
 | 2026-11-03 | Cleaner logo: three overlapping glass lenses on graphite, growing and brightening from left to right, with light where they overlap; all app icons regenerated; the menu bar icon is the same three lenses (outlined while checking) and no longer shows a count |
+| 2026-11-03 | Code review pass: state writes serialised (no lost or corrupt `findings.json`), menu built without holding the shared lock, no secret text in agent-lens notes or MCP URLs, OSV fix versions per advisory with real version ordering and pagination, private-registry packages kept off the network, wall-clock scheduling, safer Windows opener, pinned release workflow; shared helpers replace duplicated code |
 
 ## 10. Decisions
 

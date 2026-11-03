@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
-use super::{Ctx, Manager, Tool, unset_marker};
+use super::{Ctx, Manager, Tool, cli_get, cli_set};
 use crate::duration::DAY;
-use crate::exec;
 use crate::paths;
 use crate::version::Version;
 
@@ -32,9 +31,6 @@ impl Manager for Poetry {
     fn bare_unit(&self) -> i64 {
         DAY
     }
-    fn target(&self, days: u32) -> String {
-        days.to_string()
-    }
     fn location(&self, _tool: &Tool) -> PathBuf {
         if let Some(dir) = std::env::var_os("POETRY_CONFIG_DIR").filter(|d| !d.is_empty()) {
             return PathBuf::from(dir).join("config.toml");
@@ -54,20 +50,9 @@ impl Manager for Poetry {
         dir.join("config.toml")
     }
     fn read(&self, tool: &Tool, ctx: &Ctx) -> Result<Option<String>> {
-        let out = exec::run(&tool.bin, &["config", KEY], &ctx.search)?;
-        if !out.success {
-            bail!("poetry config failed: {}", out.error_text());
-        }
-        Ok(out
-            .last_line()
-            .filter(|v| !unset_marker(v))
-            .map(str::to_string))
+        cli_get(tool, ctx, &["config", KEY], None)
     }
     fn write(&self, tool: &Tool, value: &str, ctx: &Ctx) -> Result<()> {
-        let out = exec::run(&tool.bin, &["config", KEY, value], &ctx.search)?;
-        if !out.success {
-            bail!("poetry config failed: {}", out.error_text());
-        }
-        Ok(())
+        cli_set(tool, ctx, &["config", KEY, value])
     }
 }

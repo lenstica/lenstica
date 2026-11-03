@@ -3,20 +3,15 @@
 //! every read and write, which is how the end-to-end tests run.
 
 use std::env;
-use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::path::PathBuf;
+
+pub use lenstica_lens::{home_dir as home, tilde};
 
 fn env_dir(var: &str) -> Option<PathBuf> {
     env::var_os(var)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-}
-
-pub fn home() -> PathBuf {
-    let primary = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    env_dir(primary)
-        .or_else(|| env_dir("HOME"))
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 pub fn xdg_config_home() -> Option<PathBuf> {
@@ -40,15 +35,6 @@ pub fn appdata() -> PathBuf {
 
 pub fn local_appdata() -> PathBuf {
     env_dir("LOCALAPPDATA").unwrap_or_else(|| home().join("AppData").join("Local"))
-}
-
-/// Render a path with the home directory abbreviated to `~`.
-pub fn tilde(path: &Path) -> String {
-    match path.strip_prefix(home()) {
-        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Ok(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
-        Err(_) => path.display().to_string(),
-    }
 }
 
 /// Expand a leading `~` to the home directory.

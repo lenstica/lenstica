@@ -2,9 +2,10 @@
 //! Shai-Hulud-style worms execute. Recommended, applied only with
 //! `install_scripts.block = true` (or a click on the finding).
 
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
 
 use crate::config::Config;
@@ -21,8 +22,7 @@ fn yarnrc() -> PathBuf {
 
 fn npmrc() -> PathBuf {
     std::env::var_os("NPM_CONFIG_USERCONFIG")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| paths::home().join(".npmrc"))
+        .map_or_else(|| paths::home().join(".npmrc"), PathBuf::from)
 }
 
 /// A manager that runs dependency install scripts, and how to stop it.
@@ -31,10 +31,15 @@ struct Open {
     name: &'static str,
     setting: &'static str,
     path: PathBuf,
+    /// Why blocking failed, when `install_scripts.block` tried.
+    error: Option<String>,
 }
 
-fn npm_runs_scripts(npm: &std::path::Path, search: &std::ffi::OsStr) -> Result<bool> {
+fn npm_runs_scripts(npm: &Path, search: &OsStr) -> Result<bool> {
     let out = exec::run(npm, &["config", "get", "ignore-scripts"], search)?;
+    if !out.success {
+        bail!("npm config get failed: {}", out.error_text());
+    }
     Ok(out.last_line() != Some("true"))
 }
 
@@ -43,11 +48,10 @@ fn yarn_runs_scripts() -> Result<bool> {
     Ok(files::yaml_get_top(&src, "enableScripts").as_deref() != Some("false"))
 }
 
-fn block(id: &str, search: &std::ffi::OsStr) -> Result<String> {
+fn block(id: &str, search: &OsStr) -> Result<String> {
     match id {
         "npm" => {
-            let npm =
-                exec::find("npm", search).ok_or_else(|| anyhow::anyhow!("npm is not installed"))?;
+            let npm = exec::find("npm", search).context("npm is not installed")?;
             let out = exec::run(
                 &npm,
                 &["config", "set", "ignore-scripts=true", "--location=user"],
@@ -91,6 +95,7 @@ impl Lens for InstallScripts {
                     name: "npm",
                     setting: "ignore-scripts=true",
                     path: npmrc(),
+                    error: None,
                 });
             } else {
                 passing.push("npm: ignore-scripts=true".to_string());
@@ -104,22 +109,21 @@ impl Lens for InstallScripts {
                     name: "Yarn",
                     setting: "enableScripts: false",
                     path: yarnrc(),
+                    error: None,
                 });
             } else if modern {
                 passing.push("Yarn: enableScripts: false".to_string());
             }
         }
+        let mut old_pnpm = None;
         if let Some(pnpm) = exec::find("pnpm", search) {
-            if exec::version_of(&pnpm, search).is_some_and(|v| v >= Version::new(10, 0, 0)) {
-                passing.push(
+            match exec::version_of(&pnpm, search) {
+                Some(v) if v >= Version::new(10, 0, 0) => passing.push(
                     "pnpm 10+: dependency scripts run only for packages allowed by name"
                         .to_string(),
-                );
-            } else {
-                passing.push(
-                    "pnpm before 10 runs dependency scripts; upgrade to 10+ to block them"
-                        .to_string(),
-                );
+                ),
+                Some(v) => old_pnpm = Some(v),
+                None => {}
             }
         }
         if exec::find("bun", search).is_some() {
@@ -128,17 +132,16 @@ impl Lens for InstallScripts {
 
         let mut actions = Vec::new();
         if cfg.install_scripts.block {
-            let mut still_open = Vec::new();
-            for o in open {
-                match block(o.id, search) {
-                    Ok(done) => actions.push(format!("Blocked install scripts. {done}.")),
-                    Err(e) => {
-                        passing.push(format!("{}: {e:#}", o.name));
-                        still_open.push(o);
-                    }
+            open.retain_mut(|o| match block(o.id, search) {
+                Ok(done) => {
+                    actions.push(format!("Blocked install scripts. {done}."));
+                    false
                 }
-            }
-            open = still_open;
+                Err(e) => {
+                    o.error = Some(format!("{e:#}"));
+                    true
+                }
+            });
         }
 
         let mut findings: Vec<Finding> = open
@@ -147,10 +150,10 @@ impl Lens for InstallScripts {
                 Finding::new(format!("open|{}", o.id), Severity::Low, "settings", format!("{} runs dependencies' install scripts", o.name))
                     .detail(format!(
                         "Installing a package lets it run code as you, before you ever import it. That is how the \
-                         Shai-Hulud worm stole npm, GitHub and cloud credentials. {} stops it ({} in {}).",
+                         Shai-Hulud worm stole npm, GitHub and cloud credentials. Setting {} in {} stops it.{}",
                         o.setting,
-                        o.setting,
-                        paths::tilde(&o.path)
+                        paths::tilde(&o.path),
+                        o.error.as_ref().map_or_else(String::new, |e| format!(" Lenstica could not set it: {e}"))
                     ))
                     .remedy(format!(
                         "Click to set {} now, or set install_scripts.block = true. Packages that need a build step \
@@ -161,6 +164,13 @@ impl Lens for InstallScripts {
                     .fixable()
             })
             .collect();
+        if let Some(v) = old_pnpm {
+            findings.push(
+                Finding::new("old-pnpm", Severity::Low, "settings", format!("pnpm {v} runs dependencies' install scripts"))
+                    .detail("pnpm before 10 runs every dependency's install scripts; pnpm 10 runs them only for packages allowed by name.")
+                    .remedy("Upgrade pnpm to 10 or later."),
+            );
+        }
         if exec::find("uv", search).is_some() || exec::find("pip3", search).is_some() {
             findings.push(
                 Finding::new("sdist-builds", Severity::Info, "settings", "pip and uv run build code for source-only packages")

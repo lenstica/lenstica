@@ -18,15 +18,17 @@ use serde::{Deserialize, Serialize};
 
 use super::lockfiles::{Ecosystem, Pkg};
 use crate::config::Audit;
+use crate::duration::{DAY, WEEK};
 use crate::files;
 use crate::http;
 use crate::paths;
 
 /// Don't re-ask a registry about a version it could not date for this long
 /// (private and unpublished packages would otherwise be re-requested every pass).
-const RETRY_AFTER_SECS: i64 = 24 * 3600;
+/// How long a failed lookup waits before it is tried again.
+pub const RETRY_AFTER_SECS: i64 = DAY;
 /// How old a deprecated/yanked answer may be before it is refreshed.
-const STATUS_TTL_SECS: i64 = 7 * 24 * 3600;
+const STATUS_TTL_SECS: i64 = WEEK;
 const BATCH: usize = 64;
 
 #[derive(Default, Serialize, Deserialize)]
@@ -45,6 +47,27 @@ pub struct Cache {
     status_checked: BTreeMap<String, i64>,
 }
 
+/// What a registry says about one version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status<'a> {
+    Fine,
+    /// npm: the maintainers' deprecation message.
+    Deprecated(&'a str),
+    /// PyPI or crates.io: the reason given.
+    Yanked(&'a str),
+}
+
+impl<'a> Status<'a> {
+    /// The cache keeps `""`, `"deprecated: <message>"` or `"yanked: <reason>"`.
+    fn parse(stored: &'a str) -> Self {
+        match stored.split_once(": ") {
+            Some(("deprecated", msg)) => Self::Deprecated(msg),
+            Some(("yanked", msg)) => Self::Yanked(msg),
+            _ => Self::Fine,
+        }
+    }
+}
+
 fn version_key(pkg: &Pkg) -> String {
     format!("{}:{}@{}", pkg.eco.label(), pkg.name, pkg.version)
 }
@@ -59,16 +82,16 @@ impl Cache {
     }
 
     pub fn load() -> Self {
-        files::read_optional(&Self::path())
-            .ok()
-            .flatten()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        files::read_json(&Self::path()).unwrap_or_default()
     }
 
     /// Merge into what is on disk first: several lenses, the menu bar app
     /// and a CLI run may fill the cache at once, and none may drop another's work.
     pub fn save(&self) -> Result<()> {
+        files::with_state_lock(|| self.merge_into_disk())
+    }
+
+    fn merge_into_disk(&self) -> Result<()> {
         let mut merged = Self::load();
         merged
             .published
@@ -96,20 +119,21 @@ impl Cache {
             .map(|t| t.with_timezone(&Utc))
     }
 
-    /// `Some("deprecated: …")` / `Some("yanked: …")`, `Some("")` when fine,
     /// `None` when never checked.
-    pub fn status(&self, pkg: &Pkg) -> Option<&str> {
-        self.status.get(&version_key(pkg)).map(String::as_str)
+    pub fn status(&self, pkg: &Pkg) -> Option<Status<'_>> {
+        self.status.get(&version_key(pkg)).map(|s| Status::parse(s))
     }
 
     fn needs_fetch(&self, pkg: &Pkg, now: i64, want_status: bool) -> bool {
         let key = version_key(pkg);
-        let undated = self.lookup(pkg).is_none()
-            && self
-                .fetched
-                .get(&key)
-                .is_none_or(|t| now - t >= RETRY_AFTER_SECS);
+        // A name or version the registry did not know waits a day either way.
+        let backing_off = self
+            .fetched
+            .get(&key)
+            .is_some_and(|t| now - t < RETRY_AFTER_SECS);
+        let undated = self.lookup(pkg).is_none() && !backing_off;
         let stale_status = want_status
+            && !backing_off
             && self
                 .status_checked
                 .get(&key)
@@ -301,6 +325,7 @@ struct Job {
 }
 
 /// Where the sparse index keeps a crate: `se/rd/serde`, `3/s/syn`, `2/cc`, `1/a`.
+/// Crate names are ASCII, so the slicing is on character boundaries.
 fn crate_index_path(name: &str) -> String {
     let n = name.to_lowercase();
     match n.len() {
@@ -311,8 +336,7 @@ fn crate_index_path(name: &str) -> String {
     }
 }
 
-/// One version in a crates.io sparse-index file. Crate names are ASCII, so
-/// the slicing above is on character boundaries.
+/// One version in a crates.io sparse-index file.
 #[derive(Deserialize)]
 struct IndexLine {
     vers: String,

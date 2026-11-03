@@ -40,6 +40,7 @@ use clap::{Parser, Subcommand};
 use lenstica_lens::{Finding, Severity};
 
 use crate::config::Config;
+use crate::duration::{DAY, HOUR, MINUTE};
 use crate::lenses::store::RunResult;
 use crate::managers::{Action, Ctx, Mode};
 use crate::paths::tilde;
@@ -84,12 +85,12 @@ enum Command {
         #[arg(long)]
         notify: bool,
     },
-    /// List findings with details and remedies
+    /// List findings with details and remedies; exits 1 when any needs attention
     Findings {
         /// Only this lens
         #[arg(long)]
         lens: Option<String>,
-        /// Only this category: malware, vulnerability, secret, cooldown, deprecated, settings
+        /// Only this category: malware, vulnerability, secret, cooldown, deprecated, settings, agent, telemetry
         #[arg(long)]
         category: Option<String>,
         /// Minimum severity: info, low, medium, high, critical (default: low)
@@ -257,9 +258,12 @@ fn from_terminal() -> bool {
         let attached = unsafe { GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) };
         attached > 1
     }
+    // Any terminal stream: `lenstica | less` and `$(lenstica)` still come from one.
     #[cfg(not(windows))]
     {
-        std::io::stdout().is_terminal()
+        std::io::stdin().is_terminal()
+            || std::io::stdout().is_terminal()
+            || std::io::stderr().is_terminal()
     }
 }
 
@@ -271,17 +275,24 @@ fn exit(problems: bool) -> ExitCode {
     }
 }
 
-fn run_checkers(cfg: &Config, force: bool, only: &[String], offline: bool) -> Vec<RunResult> {
-    let due = lenses::registry(cfg)
-        .iter()
-        .filter(|r| {
-            lenses::enabled(cfg, r) && (only.is_empty() || only.iter().any(|o| o == r.id()))
-        })
-        .count();
-    if std::io::stderr().is_terminal() && due > 0 {
+fn run_lenses(cfg: &Config, force: bool, only: &[String], offline: bool) -> Vec<RunResult> {
+    let due = lenses::due(cfg, force, only);
+    if std::io::stderr().is_terminal() && !due.is_empty() {
         eprintln!("Running lenses… (the first run looks up every package; later runs are quick)");
     }
-    lenses::run_due(cfg, force, only, offline)
+    lenses::run_all(cfg, &due, offline)
+}
+
+/// The lens, which must exist and be turned on.
+fn enabled_lens(cfg: &Config, id: &str) -> Result<lenses::Registered> {
+    let r = lenses::find(cfg, id)?;
+    if !lenses::enabled(cfg, &r) {
+        bail!(
+            "the {id} lens is turned off; turn it on with `[lenses.{id}] enabled = true` in {}",
+            tilde(&config::path())
+        );
+    }
+    Ok(r)
 }
 
 fn run(command: Command) -> Result<ExitCode> {
@@ -289,7 +300,7 @@ fn run(command: Command) -> Result<ExitCode> {
         Command::Status { json, no_run } => {
             let cfg = Config::load()?;
             if !no_run {
-                run_checkers(&cfg, false, &[], false);
+                run_lenses(&cfg, false, &[], false);
             }
             lenses::store::prune(&cfg)?;
             let results = lenses::store::load();
@@ -301,17 +312,17 @@ fn run(command: Command) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Check {
-            lenses,
+            lenses: ids,
             json,
             quiet,
             offline,
             notify,
         } => {
             let cfg = Config::load()?;
-            for id in &lenses {
-                lenses::find(&cfg, id)?;
+            for id in &ids {
+                enabled_lens(&cfg, id)?;
             }
-            let ran = run_checkers(&cfg, true, &lenses, offline);
+            let ran = run_lenses(&cfg, true, &ids, offline);
             if notify {
                 for r in &ran {
                     lenses::store::notify_new(&cfg, r);
@@ -320,7 +331,7 @@ fn run(command: Command) -> Result<ExitCode> {
             let results = lenses::store::load();
             let shown: BTreeMap<String, RunResult> = results
                 .into_iter()
-                .filter(|(id, _)| lenses.is_empty() || lenses.contains(id))
+                .filter(|(id, _)| ids.is_empty() || ids.contains(id))
                 .collect();
             if json {
                 print_json(&shown)?;
@@ -346,19 +357,17 @@ fn run(command: Command) -> Result<ExitCode> {
                 }
                 None => Severity::Low,
             };
+            if let Some(id) = &lens {
+                lenses::find(&cfg, id)?;
+            }
             let results = lenses::store::load();
-            let mut list: Vec<&Finding> = results
-                .values()
+            let mut list: Vec<&Finding> = lenses::live_results(&cfg, &results)
                 .filter(|r| lens.as_ref().is_none_or(|c| &r.id == c))
                 .flat_map(|r| &r.findings)
                 .filter(|f| category.as_ref().is_none_or(|c| &f.category == c))
                 .filter(|f| f.severity >= min)
                 .collect();
-            list.sort_by(|a, b| {
-                b.severity
-                    .cmp(&a.severity)
-                    .then_with(|| a.title.cmp(&b.title))
-            });
+            list.sort_by(|a, b| lenses::by_severity(a, b));
             if json {
                 print_json(&list)?;
             } else if list.is_empty() {
@@ -373,12 +382,12 @@ fn run(command: Command) -> Result<ExitCode> {
         }
         Command::Lenses => {
             let cfg = Config::load()?;
-            print_checkers(&cfg);
+            print_lenses(&cfg);
             Ok(ExitCode::SUCCESS)
         }
         Command::Fix { lens, key } => {
             let cfg = Config::load()?;
-            println!("{}", lenses::fix(&cfg, &lens, &key)?);
+            println!("{}", lenses::fix(&cfg, &lens, &key)?.0);
             Ok(ExitCode::SUCCESS)
         }
         Command::Apply {
@@ -431,11 +440,12 @@ fn run(command: Command) -> Result<ExitCode> {
         }
         Command::Scan { json } => {
             let cfg = Config::load()?;
-            run_and_show(&cfg, &["project-settings".to_string()], json, false)
+            let id = enabled_lens(&cfg, "project-settings")?.id().to_string();
+            run_and_show(&cfg, &[id], json, false)
         }
         Command::Config { action } => {
-            Config::load()?;
-            let path = config::path();
+            // Not loaded: a file with an invalid value must still open for repair.
+            let path = config::ensure_exists()?;
             match action.unwrap_or(ConfigAction::Path) {
                 ConfigAction::Path => println!("{}", path.display()),
                 ConfigAction::Show => print!("{}", std::fs::read_to_string(&path)?),
@@ -457,19 +467,10 @@ fn run(command: Command) -> Result<ExitCode> {
             if let Some(id) = &lens {
                 lenses::find(&cfg, id)?;
             }
-            let mut list: Vec<(&Finding, &str)> = results
-                .values()
-                .filter(|r| lens.as_ref().is_none_or(|c| &r.id == c))
-                .flat_map(|r| r.findings.iter().map(move |f| (f, r.title.as_str())))
-                .filter(|(f, _)| match &key {
-                    Some(k) => &f.key == k,
-                    None => lenses::is_alert(&cfg, f),
-                })
-                .collect();
+            let list = prompt::collect(&cfg, &results, &[(lens.as_deref(), key.as_deref())]);
             if key.is_some() && list.is_empty() {
                 bail!("no current finding with that key; `lenstica findings --json` lists them");
             }
-            list.sort_by(|a, b| b.0.severity.cmp(&a.0.severity));
             print!("{}", prompt::for_findings(&list));
             Ok(ExitCode::SUCCESS)
         }
@@ -492,10 +493,14 @@ fn run(command: Command) -> Result<ExitCode> {
             )?;
             // The framework delivers asynchronously; give it a moment before exiting.
             std::thread::sleep(std::time::Duration::from_secs(2));
-            println!(
-                "Sent {}. Not seeing it? Check System Settings → Notifications.",
-                notify::route()
-            );
+            let settings = if cfg!(target_os = "macos") {
+                "System Settings → Notifications"
+            } else if cfg!(windows) {
+                "Settings → System → Notifications"
+            } else {
+                "your desktop's notification settings"
+            };
+            println!("Sent {}. Not seeing it? Check {settings}.", notify::route());
             Ok(ExitCode::SUCCESS)
         }
         Command::Skill { install: false, .. } => {
@@ -515,7 +520,7 @@ fn run_and_show(cfg: &Config, ids: &[String], json: bool, offline: bool) -> Resu
     if ids.is_empty() {
         bail!("those lenses are turned off in {}", tilde(&config::path()));
     }
-    let ran = run_checkers(cfg, true, ids, offline);
+    let ran = run_lenses(cfg, true, ids, offline);
     if json {
         print_json(&ran)?;
     } else {
@@ -536,7 +541,7 @@ fn run_and_show(cfg: &Config, ids: &[String], json: bool, offline: bool) -> Resu
             .flat_map(|r| &r.findings)
             .filter(|f| f.severity.is_problem())
             .collect();
-        list.sort_by(|a, b| b.severity.cmp(&a.severity));
+        list.sort_by(|a, b| lenses::by_severity(a, b));
         print_findings_detail(&list);
         let info = ran
             .iter()
@@ -598,8 +603,27 @@ fn watch(once: bool) -> Result<ExitCode> {
         eprintln!("lenstica: the monitor is already running");
         return Ok(ExitCode::SUCCESS);
     };
+    // A settings file broken by an edit keeps the monitor on its last good
+    // settings rather than exiting (a login item would restart it in a loop).
+    let mut last_good: Option<Config> = None;
     loop {
-        let cfg = Config::load()?;
+        let cfg = match Config::load() {
+            Ok(cfg) => {
+                last_good = Some(cfg.clone());
+                cfg
+            }
+            Err(e) if once => return Err(e),
+            Err(e) => {
+                eprintln!("lenstica: {e:#}");
+                match &last_good {
+                    Some(cfg) => cfg.clone(),
+                    None => {
+                        thread::sleep(Duration::from_secs(30));
+                        continue;
+                    }
+                }
+            }
+        };
         for result in lenses::run_due(&cfg, once, &[], false) {
             let stamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
             let alerts = result
@@ -631,9 +655,9 @@ fn ago(t: chrono::DateTime<chrono::Utc>) -> String {
     let secs = (chrono::Utc::now() - t).num_seconds().max(0);
     match secs {
         s if s < 60 => "just now".to_string(),
-        s if s < 3600 => format!("{} min ago", s / 60),
-        s if s < 86_400 => format!("{} h ago", s / 3600),
-        s => format!("{} days ago", s / 86_400),
+        s if s < HOUR => format!("{} min ago", s / MINUTE),
+        s if s < DAY => format!("{} h ago", s / HOUR),
+        s => format!("{} days ago", s / DAY),
     }
 }
 
@@ -674,7 +698,7 @@ fn print_overview(cfg: &Config, results: &BTreeMap<String, RunResult>) {
         let title = pad(r.lens.title(), width);
         match results.get(r.id()) {
             _ if !lenses::enabled(cfg, r) => {
-                println!("  {} {}  {}", s.dim("-"), s.dim(&title), s.dim("off"))
+                println!("  {} {}  {}", s.dim("-"), s.dim(&title), s.dim("off"));
             }
             None => println!("  {} {}  {}", s.dim("…"), title, s.dim("not run yet")),
             Some(res) => {
@@ -690,11 +714,11 @@ fn print_overview(cfg: &Config, results: &BTreeMap<String, RunResult>) {
                 } else {
                     s.green("✓")
                 };
-                let text = res
-                    .error
-                    .as_ref()
-                    .map_or(res.summary.clone(), |e| format!("failed: {e}"));
-                println!("  {mark} {title}  {}  {}", text, s.dim(&ago(res.ran_at)));
+                println!(
+                    "  {mark} {title}  {}  {}",
+                    res.status_text(),
+                    s.dim(&ago(res.ran_at))
+                );
             }
         }
     }
@@ -704,11 +728,7 @@ fn print_overview(cfg: &Config, results: &BTreeMap<String, RunResult>) {
         .flat_map(|r| &r.findings)
         .filter(|f| lenses::is_alert(cfg, f))
         .collect();
-    alerts.sort_by(|a, b| {
-        b.severity
-            .cmp(&a.severity)
-            .then_with(|| a.title.cmp(&b.title))
-    });
+    alerts.sort_by(|a, b| lenses::by_severity(a, b));
     if alerts.is_empty() {
         println!(
             "{}",
@@ -759,17 +779,14 @@ fn print_findings_detail(list: &[&Finding]) {
         if let Some(link) = f.links.first() {
             println!("         {}", s.dim(link));
         }
-        if f.fixable {
-            println!(
-                "         {}",
-                s.dim(&format!("fix: lenstica fix {} '{}'", f.lens, f.key))
-            );
+        if let Some(fix) = prompt::fix_command(f) {
+            println!("         {}", s.dim(&format!("fix: {fix}")));
         }
         println!();
     }
 }
 
-fn print_checkers(cfg: &Config) {
+fn print_lenses(cfg: &Config) {
     let s = Style::detect();
     let results = lenses::store::load();
     for r in lenses::registry(cfg) {
@@ -781,8 +798,7 @@ fn print_checkers(cfg: &Config) {
         let every = lenses::interval(cfg, &r).as_secs() / 60;
         let last = results
             .get(r.id())
-            .map(|res| ago(res.ran_at))
-            .unwrap_or_else(|| "never run".to_string());
+            .map_or_else(|| "never run".to_string(), |res| ago(res.ran_at));
         println!(
             "{state} {}  {}",
             s.bold(&format!("{:<18}", r.id())),
@@ -844,7 +860,7 @@ fn autostart_cmd(action: AutostartAction) -> Result<ExitCode> {
             );
         }
         AutostartAction::Uninstall => {
-            let removed = autostart::uninstall()?;
+            let removed = autostart::uninstall(true)?;
             if removed.is_empty() {
                 println!("No login item was installed.");
             }
@@ -936,16 +952,16 @@ fn print_outcomes(outcomes: &[managers::Outcome], days: u32, dry_run: bool) {
 }
 
 fn print_managers() {
+    const EXAMPLE_DAYS: u32 = 7;
     let s = Style::detect();
     println!("{}", s.bold("Configured by Lenstica:"));
-    let ctx_days = 7;
     for m in managers::all() {
         println!(
             "  {:<7} {:<26} {}  {}",
             m.id(),
             m.setting(),
             s.dim(&format!("needs ≥ {}", m.min_version())),
-            s.dim(&format!("7 days = {}", m.target(ctx_days)))
+            s.dim(&format!("{EXAMPLE_DAYS} days = {}", m.target(EXAMPLE_DAYS)))
         );
     }
     println!();

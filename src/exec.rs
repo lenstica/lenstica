@@ -111,8 +111,7 @@ fn default_dirs() -> Vec<PathBuf> {
 /// nvm installs each Node version under its own prefix; newest first.
 fn nvm_bins(home: &Path) -> Vec<PathBuf> {
     let root = std::env::var_os("NVM_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".nvm"))
+        .map_or_else(|| home.join(".nvm"), PathBuf::from)
         .join("versions")
         .join("node");
     let Ok(entries) = std::fs::read_dir(root) else {
@@ -208,6 +207,17 @@ fn drain<R: Read + Send + 'static>(mut pipe: R) -> thread::JoinHandle<Vec<u8>> {
 }
 
 pub fn version_of(program: &Path, search: &OsStr) -> Option<Version> {
-    let out = run(program, &["--version"], search).ok()?;
-    Version::parse(&out.stdout).or_else(|| Version::parse(&out.stderr))
+    version_text_of(program, search).map(|(v, _)| v)
+}
+
+/// The version and how the program wrote it. Only a successful `--version`
+/// counts: an error message can name some other version ("requires Node.js
+/// v18.12").
+pub fn version_text_of(program: &Path, search: &OsStr) -> Option<(Version, String)> {
+    let out = run(program, &["--version"], search)
+        .ok()
+        .filter(|o| o.success)?;
+    Version::parse_with_text(&out.stdout)
+        .or_else(|| Version::parse_with_text(&out.stderr))
+        .map(|(v, text)| (v, text.to_string()))
 }

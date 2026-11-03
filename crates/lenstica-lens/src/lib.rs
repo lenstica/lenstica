@@ -18,8 +18,9 @@
 //! Findings must never carry secret values: name the file, the setting and the
 //! kind of credential, not its contents.
 
-use std::ffi::OsString;
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::ffi::OsStr;
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -38,7 +39,9 @@ pub enum Severity {
 }
 
 impl Severity {
-    /// Problems turn the menu bar icon orange and make `lenstica check` fail.
+    /// Low and above: counted as findings rather than information. Whether a
+    /// problem also turns the menu bar icon orange and fails `lenstica check`
+    /// is up to the user's `monitor.alert_severity`.
     pub fn is_problem(self) -> bool {
         self >= Severity::Low
     }
@@ -181,8 +184,6 @@ pub struct Report {
     pub watch: Vec<PathBuf>,
 }
 
-/// A package from a lockfile or a global install, collected once per pass and
-/// shared by every lens that looks at dependencies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Ecosystem {
@@ -211,6 +212,8 @@ impl Ecosystem {
     }
 }
 
+/// A package from a lockfile or a global install, collected once per pass and
+/// shared by every lens that looks at dependencies.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Package {
     pub ecosystem: Ecosystem,
@@ -248,12 +251,13 @@ pub struct Inventory {
 
 impl Inventory {
     /// Every distinct package, with the sources that contain it.
-    pub fn by_package(&self) -> std::collections::BTreeMap<&Package, Vec<&Source>> {
-        let mut map: std::collections::BTreeMap<&Package, Vec<&Source>> = Default::default();
+    pub fn by_package(&self) -> BTreeMap<&Package, Vec<&Source>> {
+        let mut map: BTreeMap<&Package, Vec<&Source>> = BTreeMap::new();
         for source in &self.sources {
             for package in &source.packages {
                 let list = map.entry(package).or_default();
-                if !list.iter().any(|s| std::ptr::eq(*s, source)) {
+                // Sources are visited in order, so a repeat can only be the last one.
+                if !list.last().is_some_and(|s| std::ptr::eq(*s, source)) {
                     list.push(source);
                 }
             }
@@ -273,7 +277,7 @@ pub struct Context<'a> {
     /// A lens walking `roots` itself should skip whatever this matches.
     pub exclude: &'a Exclude,
     /// PATH to find tools with; login agents start with a minimal one.
-    pub search_path: &'a OsString,
+    pub search_path: &'a OsStr,
     /// A directory of the lens's own for caches and state.
     pub state_dir: PathBuf,
     /// The lens's `[lenses.<id>]` table from lenstica.toml, as JSON.
@@ -296,6 +300,7 @@ pub struct Exclude {
 impl Exclude {
     /// `~/code/old` and `/abs/path` are paths; `fixtures` is a name. `~` must
     /// already be expanded by the caller (Lenstica does it from the settings).
+    /// A relative path such as `apps/legacy` matches that folder under any root.
     pub fn new(entries: impl IntoIterator<Item = PathBuf>) -> Self {
         let mut out = Self::default();
         for entry in entries {
@@ -318,13 +323,18 @@ impl Exclude {
     }
 
     /// Whether `path` is an excluded folder or inside one.
-    pub fn skips(&self, path: &std::path::Path) -> bool {
-        self.paths.iter().any(|p| path.starts_with(p))
-            || (!self.names.is_empty()
-                && path.components().any(|c| {
-                    let c = c.as_os_str().to_string_lossy();
-                    self.names.iter().any(|n| *n == c)
-                }))
+    pub fn skips(&self, path: &Path) -> bool {
+        self.paths.iter().any(|p| {
+            if p.is_absolute() {
+                path.starts_with(p)
+            } else {
+                path.ancestors().any(|a| a.ends_with(p))
+            }
+        }) || (!self.names.is_empty()
+            && path.components().any(|c| {
+                let c = c.as_os_str().to_string_lossy();
+                self.names.iter().any(|n| *n == c)
+            }))
     }
 }
 
@@ -340,6 +350,31 @@ pub trait Lens: Send + Sync {
     /// Resolve a finding this lens marked `fixable`; returns what was done.
     fn fix(&self, _cx: &Context, finding: &Finding) -> Result<String> {
         anyhow::bail!("{} cannot fix `{}` automatically", self.id(), finding.key)
+    }
+}
+
+fn env_dir(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+/// The user's home directory (`HOME`, or `USERPROFILE` on Windows), the way
+/// Lenstica resolves it, so lenses read the same files it does.
+pub fn home_dir() -> PathBuf {
+    let primary = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    env_dir(primary)
+        .or_else(|| env_dir("HOME"))
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// A path with the home directory abbreviated to `~`, for labels.
+pub fn tilde(path: &Path) -> String {
+    match path.strip_prefix(home_dir()) {
+        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Ok(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
+        Err(_) => path.display().to_string(),
     }
 }
 

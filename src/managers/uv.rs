@@ -1,11 +1,10 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use toml_edit::Value;
 
-use super::{Ctx, Manager, Tool};
+use super::{Ctx, Manager, Tool, days_text, toml_file_get, toml_file_set};
 use crate::duration::DAY;
-use crate::files;
 use crate::paths;
 use crate::version::Version;
 
@@ -42,23 +41,19 @@ impl Manager for Uv {
         DAY
     }
     fn target(&self, days: u32) -> String {
-        format!("{days} {}", if days == 1 { "day" } else { "days" })
+        days_text(days)
+    }
+    /// A duration (`7 days`, `P7D`) or a date.
+    fn accepts(&self, _raw: &str) -> bool {
+        true
     }
     fn location(&self, _tool: &Tool) -> PathBuf {
         user_config()
     }
     fn read(&self, _tool: &Tool, _ctx: &Ctx) -> Result<Option<String>> {
-        let path = user_config();
-        match files::read_optional(&path)? {
-            Some(src) => files::toml_get(&src, &KEYS).with_context(|| path.display().to_string()),
-            None => Ok(None),
-        }
+        toml_file_get(&user_config(), &KEYS)
     }
     fn write(&self, _tool: &Tool, value: &str, _ctx: &Ctx) -> Result<()> {
-        let path = user_config();
-        let src = files::read_optional(&path)?.unwrap_or_default();
-        let updated = files::toml_set(&src, &KEYS, Value::from(value))
-            .with_context(|| path.display().to_string())?;
-        files::write_atomic(&path, &updated)
+        toml_file_set(&user_config(), &KEYS, Value::from(value))
     }
 }

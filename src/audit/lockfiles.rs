@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::duration::unquote;
+use crate::files;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -42,6 +43,10 @@ pub struct Locked {
     pub pkg: Pkg,
     /// Publish time recorded in the lockfile itself (uv records upload times).
     pub published: Option<DateTime<Utc>>,
+    /// From a public registry, so its name may be looked up there. uv keeps
+    /// private-index packages whose lockfile records an upload time; they
+    /// count for the age check but are never sent anywhere.
+    pub public: bool,
 }
 
 pub const NAMES: &[&str] = &[
@@ -61,7 +66,7 @@ pub fn parse(path: &Path, src: &str, npm_registry: &str) -> Result<Vec<Locked>> 
         "package-lock.json" | "npm-shrinkwrap.json" => npm_lock(src, npm_registry),
         "pnpm-lock.yaml" => Ok(pnpm_lock(src)),
         "yarn.lock" => Ok(yarn_lock(src, npm_registry)),
-        "bun.lock" => bun_lock(src),
+        "bun.lock" => bun_lock(src, npm_registry),
         "uv.lock" => uv_lock(src),
         "poetry.lock" => poetry_lock(src),
         "Cargo.lock" => cargo_lock(src),
@@ -81,6 +86,11 @@ fn split_spec(spec: &str) -> Option<(&str, &str)> {
 }
 
 fn npm(name: &str, version: &str) -> Option<Locked> {
+    // An alias (`"x": "npm:real@1.0.0"`) names the real package.
+    let (name, version) = version
+        .strip_prefix("npm:")
+        .and_then(split_spec)
+        .unwrap_or((name, version));
     (!name.is_empty() && is_release(version)).then(|| Locked {
         pkg: Pkg {
             eco: Ecosystem::Npm,
@@ -88,10 +98,11 @@ fn npm(name: &str, version: &str) -> Option<Locked> {
             version: version.to_string(),
         },
         published: None,
+        public: true,
     })
 }
 
-fn pypi(name: &str, version: &str, published: Option<DateTime<Utc>>) -> Locked {
+fn pypi(name: &str, version: &str, published: Option<DateTime<Utc>>, public: bool) -> Locked {
     Locked {
         pkg: Pkg {
             eco: Ecosystem::Pypi,
@@ -99,13 +110,34 @@ fn pypi(name: &str, version: &str, published: Option<DateTime<Utc>>) -> Locked {
             version: version.to_string(),
         },
         published,
+        public,
     }
 }
 
+/// The public npm registries, then the configured one, each ending in `/`.
+fn npm_registries(npm_registry: &str) -> [String; 3] {
+    [
+        "https://registry.npmjs.org/".to_string(),
+        "https://registry.yarnpkg.com/".to_string(),
+        format!("{}/", npm_registry.trim_end_matches('/')),
+    ]
+}
+
 fn is_public_npm(url: &str, npm_registry: &str) -> bool {
-    url.starts_with("https://registry.npmjs.org/")
-        || url.starts_with("https://registry.yarnpkg.com/")
-        || url.starts_with(npm_registry.trim_end_matches('/'))
+    npm_registries(npm_registry)
+        .iter()
+        .any(|r| url.starts_with(r.as_str()))
+}
+
+/// The host of an `https://host[:port]/...` URL.
+fn url_host(url: &str) -> Option<&str> {
+    let rest = url.split_once("://")?.1;
+    rest.split(['/', ':', '?', '#']).next()
+}
+
+/// pypi.org itself, not a mirror or test.pypi.org.
+fn is_public_pypi(url: &str) -> bool {
+    matches!(url_host(url), Some("pypi.org" | "files.pythonhosted.org"))
 }
 
 // ---- npm --------------------------------------------------------------------
@@ -248,58 +280,37 @@ fn yarn_lock(src: &str, npm_registry: &str) -> Vec<Locked> {
 }
 
 fn yarn_classic_name(url: &str, npm_registry: &str) -> Option<String> {
-    if !is_public_npm(url, npm_registry) {
-        return None;
-    }
-    let path = url.split_once("://")?.1.split_once('/')?.1;
+    // The name follows the registry's own path (`https://nexus/repository/npm/`).
+    let path = npm_registries(npm_registry)
+        .iter()
+        .find_map(|r| url.strip_prefix(r.as_str()))?;
     let name = path.split("/-/").next()?;
     Some(name.replace("%2f", "/").replace("%2F", "/"))
 }
 
 // ---- Bun --------------------------------------------------------------------
 
-fn bun_lock(src: &str) -> Result<Vec<Locked>> {
+/// bun.lock: JSON with trailing commas. A registry package is
+/// `[spec, registry, info, integrity]`, where an empty registry is the default.
+fn bun_lock(src: &str, npm_registry: &str) -> Result<Vec<Locked>> {
     let doc: Value =
-        serde_json::from_str(&strip_trailing_commas(src)).context("invalid bun.lock")?;
+        serde_json::from_str(&files::jsonc_to_json(src)).context("invalid bun.lock")?;
     let mut out = Vec::new();
     if let Some(packages) = doc.get("packages").and_then(Value::as_object) {
         for entry in packages.values() {
-            if let Some((name, version)) = entry.get(0).and_then(Value::as_str).and_then(split_spec)
+            let public = entry
+                .get(1)
+                .and_then(Value::as_str)
+                .is_none_or(|r| r.is_empty() || is_public_npm(r, npm_registry));
+            if public
+                && let Some((name, version)) =
+                    entry.get(0).and_then(Value::as_str).and_then(split_spec)
             {
                 out.extend(npm(name, version));
             }
         }
     }
     Ok(out)
-}
-
-/// bun.lock is JSON with trailing commas; drop the commas that precede `}` / `]`.
-fn strip_trailing_commas(src: &str) -> String {
-    let chars: Vec<char> = src.chars().collect();
-    let mut out = String::with_capacity(src.len());
-    let (mut in_string, mut escaped) = (false, false);
-    for (i, &c) in chars.iter().enumerate() {
-        if in_string {
-            out.push(c);
-            match c {
-                _ if escaped => escaped = false,
-                '\\' => escaped = true,
-                '"' => in_string = false,
-                _ => {}
-            }
-            continue;
-        }
-        if c == '"' {
-            in_string = true;
-        } else if c == ',' {
-            let next = chars[i + 1..].iter().find(|n| !n.is_whitespace());
-            if matches!(next, Some('}') | Some(']')) {
-                continue;
-            }
-        }
-        out.push(c);
-    }
-    out
 }
 
 // ---- uv ---------------------------------------------------------------------
@@ -333,7 +344,7 @@ fn uv_lock(src: &str) -> Result<Vec<Locked>> {
         let (Some(version), Some(source)) = (p.version, p.source) else {
             continue;
         };
-        let Some(registry) = source.get("registry").and_then(|r| r.as_str()) else {
+        let Some(registry) = source.get("registry").and_then(toml::Value::as_str) else {
             continue;
         };
         // The earliest file upload is when the release became installable.
@@ -345,8 +356,9 @@ fn uv_lock(src: &str) -> Result<Vec<Locked>> {
             .filter_map(|t| DateTime::parse_from_rfc3339(t).ok())
             .map(|t| t.with_timezone(&Utc))
             .min();
-        if published.is_some() || registry.contains("pypi.org") {
-            out.push(pypi(&p.name, &version, published));
+        let public = is_public_pypi(registry);
+        if published.is_some() || public {
+            out.push(pypi(&p.name, &version, published, public));
         }
     }
     Ok(out)
@@ -381,9 +393,9 @@ fn poetry_lock(src: &str) -> Result<Vec<Locked>> {
         .filter(|p| {
             p.source
                 .as_ref()
-                .is_none_or(|s| s.url.as_deref().is_some_and(|u| u.contains("pypi.org")))
+                .is_none_or(|s| s.url.as_deref().is_some_and(is_public_pypi))
         })
-        .map(|p| pypi(&p.name, &p.version, None))
+        .map(|p| pypi(&p.name, &p.version, None, true))
         .collect())
 }
 
@@ -405,7 +417,7 @@ struct CargoPackage {
 /// crates.io, by either of its index addresses.
 fn is_crates_io(source: &str) -> bool {
     source == "registry+https://github.com/rust-lang/crates.io-index"
-        || source.starts_with("sparse+https://index.crates.io")
+        || source == "sparse+https://index.crates.io/"
 }
 
 fn cargo_lock(src: &str) -> Result<Vec<Locked>> {
@@ -422,6 +434,7 @@ fn cargo_lock(src: &str) -> Result<Vec<Locked>> {
                 version: p.version,
             },
             published: None,
+            public: true,
         })
         .collect())
 }
@@ -492,12 +505,8 @@ mod tests {
     fn bun_lock_with_trailing_commas() {
         let src = "{\n  \"lockfileVersion\": 1,\n  \"workspaces\": { \"\": { \"name\": \"app\", }, },\n  \"packages\": {\n    \"react\": [\"react@19.0.0\", \"\", {}, \"sha512-x\"],\n    \"@s/b\": [\"@s/b@1.0.0\", \"\", {}, \"sha512-y\",],\n    \"gh\": [\"gh@github:x/y#abc\", {}, \"x-y-abc\"],\n  },\n}\n";
         assert_eq!(
-            pairs(&bun_lock(src).unwrap()),
+            pairs(&bun_lock(src, "https://registry.npmjs.org").unwrap()),
             vec!["@s/b@1.0.0", "react@19.0.0"]
-        );
-        assert_eq!(
-            strip_trailing_commas("{\"a\": \"x,}\",}"),
-            "{\"a\": \"x,}\"}"
         );
     }
 

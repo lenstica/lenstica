@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
-use super::{Ctx, Manager, Tool, unset_marker};
+use super::{Ctx, Manager, Tool, cli_get, cli_set};
 use crate::duration::MINUTE;
-use crate::exec;
 use crate::paths;
 use crate::version::Version;
 
@@ -60,31 +59,13 @@ impl Manager for Pnpm {
     fn bare_unit(&self) -> i64 {
         MINUTE
     }
-    fn target(&self, days: u32) -> String {
-        (u64::from(days) * 24 * 60).to_string()
-    }
     fn location(&self, tool: &Tool) -> PathBuf {
         config_dir().join(if uses_yaml(tool) { "config.yaml" } else { "rc" })
     }
     fn read(&self, tool: &Tool, ctx: &Ctx) -> Result<Option<String>> {
-        let out = exec::run(&tool.bin, &["config", "get", key(tool)], &ctx.search)?;
-        if !out.success {
-            bail!("pnpm config get failed: {}", out.error_text());
-        }
-        Ok(out
-            .last_line()
-            .filter(|v| !unset_marker(v))
-            .map(str::to_string))
+        cli_get(tool, ctx, &["config", "get", key(tool)], None)
     }
     fn write(&self, tool: &Tool, value: &str, ctx: &Ctx) -> Result<()> {
-        let out = exec::run(
-            &tool.bin,
-            &["config", "set", "--global", key(tool), value],
-            &ctx.search,
-        )?;
-        if !out.success {
-            bail!("pnpm config set failed: {}", out.error_text());
-        }
-        Ok(())
+        cli_set(tool, ctx, &["config", "set", "--global", key(tool), value])
     }
 }

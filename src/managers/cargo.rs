@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use toml_edit::Value;
 
-use super::{Ctx, Manager, Tool};
+use super::{Ctx, Manager, Tool, days_text, toml_file_get};
 use crate::duration::DAY;
 use crate::files;
 use crate::paths;
@@ -20,19 +20,18 @@ const CRATES_IO: [&str; 3] = ["registries", "crates-io", "min-publish-age"];
 fn cargo_home() -> PathBuf {
     std::env::var_os("CARGO_HOME")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| paths::home().join(".cargo"))
+        .map_or_else(|| paths::home().join(".cargo"), PathBuf::from)
 }
 
-/// `config.toml`, or the extension-less `config` older setups still use.
+/// `config.toml`, or the extension-less `config` older setups still use:
+/// when both exist, Cargo reads `config`, so that is the one to change.
 fn config_file() -> PathBuf {
     let home = cargo_home();
     let legacy = home.join("config");
-    let current = home.join("config.toml");
-    if !current.exists() && legacy.is_file() {
+    if legacy.is_file() {
         legacy
     } else {
-        current
+        home.join("config.toml")
     }
 }
 
@@ -56,30 +55,34 @@ impl Manager for Cargo {
         DAY
     }
     fn target(&self, days: u32) -> String {
-        format!("{days} {}", if days == 1 { "day" } else { "days" })
+        days_text(days)
+    }
+    /// A duration such as `7 days`.
+    fn accepts(&self, _raw: &str) -> bool {
+        true
     }
     fn location(&self, _tool: &Tool) -> PathBuf {
         config_file()
     }
     fn read(&self, _tool: &Tool, _ctx: &Ctx) -> Result<Option<String>> {
         let path = config_file();
-        let Some(src) = files::read_optional(&path)? else {
-            return Ok(None);
-        };
-        let at =
-            |keys: &[&str]| files::toml_get(&src, keys).with_context(|| path.display().to_string());
-        Ok(match at(&CRATES_IO)? {
-            Some(v) => Some(v),
-            None => at(&GLOBAL)?,
-        })
+        if let Some(v) = toml_file_get(&path, &CRATES_IO)? {
+            return Ok(Some(v));
+        }
+        toml_file_get(&path, &GLOBAL)
     }
     fn write(&self, _tool: &Tool, value: &str, _ctx: &Ctx) -> Result<()> {
         let path = config_file();
         let src = files::read_optional(&path)?.unwrap_or_default();
-        let mut updated = files::toml_set(&src, &GLOBAL, Value::from(value))
-            .with_context(|| path.display().to_string())?;
-        if files::toml_get(&updated, &CRATES_IO)?.is_some() {
-            updated = files::toml_set(&updated, &CRATES_IO, Value::from(value))?;
+        let context = || path.display().to_string();
+        let mut updated =
+            files::toml_set(&src, &GLOBAL, Value::from(value)).with_context(context)?;
+        if files::toml_get(&updated, &CRATES_IO)
+            .with_context(context)?
+            .is_some()
+        {
+            updated =
+                files::toml_set(&updated, &CRATES_IO, Value::from(value)).with_context(context)?;
         }
         files::write_atomic(&path, &updated)
     }

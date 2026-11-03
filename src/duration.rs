@@ -101,7 +101,7 @@ fn parse_friendly(s: &str) -> Option<i64> {
         }
         while chars.next_if(|c| c.is_whitespace()).is_some() {}
         let mut unit = String::new();
-        while let Some(c) = chars.next_if(|c| c.is_ascii_alphabetic()) {
+        while let Some(c) = chars.next_if(char::is_ascii_alphabetic) {
             unit.push(c);
         }
         let n: f64 = number.parse().ok()?;
@@ -126,14 +126,22 @@ fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
         .map(|naive| naive.and_utc())
 }
 
+/// Whether `raw` is an absolute date or time (`2026-01-31`, RFC 3339).
+pub fn is_timestamp(raw: &str) -> bool {
+    parse_timestamp(unquote(raw)).is_some()
+}
+
+/// A duration in words. Fractions are cut, never rounded up, so an age just
+/// short of the cooldown never reads as the cooldown itself (`6.9 days`).
 pub fn humanize(secs: i64) -> String {
     let plural = |n: i64, unit: &str| format!("{n} {unit}{}", if n == 1 { "" } else { "s" });
+    let tenths = |s: i64, unit: i64| format!("{}.{}", s / unit, s % unit * 10 / unit);
     match secs {
         s if s <= 0 => "none".to_string(),
         s if s % DAY == 0 => plural(s / DAY, "day"),
-        s if s >= DAY => format!("{:.1} days", s as f64 / DAY as f64),
+        s if s >= DAY => format!("{} days", tenths(s, DAY)),
         s if s % HOUR == 0 => plural(s / HOUR, "hour"),
-        s if s >= HOUR => format!("{:.1} hours", s as f64 / HOUR as f64),
+        s if s >= HOUR => format!("{} hours", tenths(s, HOUR)),
         s if s % MINUTE == 0 => plural(s / MINUTE, "minute"),
         s => plural(s, "second"),
     }
@@ -195,5 +203,6 @@ mod tests {
         assert_eq!(humanize(DAY + 12 * HOUR), "1.5 days");
         assert_eq!(humanize(3 * HOUR), "3 hours");
         assert_eq!(humanize(0), "none");
+        assert_eq!(humanize(7 * DAY - HOUR), "6.9 days");
     }
 }

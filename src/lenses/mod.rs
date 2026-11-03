@@ -22,10 +22,13 @@ pub mod shared;
 mod software;
 pub mod store;
 
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet};
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use lenstica_lens::{Context, Finding, Lens, Severity};
 
 use crate::config::Config;
@@ -124,7 +127,7 @@ fn own_settings<'a>(cfg: &'a Config, id: &str) -> Option<&'a toml::Table> {
 pub fn enabled(cfg: &Config, r: &Registered) -> bool {
     if let Some(on) = own_settings(cfg, r.id())
         .and_then(|t| t.get("enabled"))
-        .and_then(|v| v.as_bool())
+        .and_then(toml::Value::as_bool)
     {
         return on;
     }
@@ -137,7 +140,7 @@ pub fn enabled(cfg: &Config, r: &Registered) -> bool {
 pub fn interval(cfg: &Config, r: &Registered) -> Duration {
     if let Some(m) = own_settings(cfg, r.id())
         .and_then(|t| t.get("interval_minutes"))
-        .and_then(|v| v.as_integer())
+        .and_then(toml::Value::as_integer)
     {
         return Duration::from_secs(m.max(1) as u64 * 60);
     }
@@ -180,12 +183,50 @@ pub fn notify_threshold(cfg: &Config) -> Severity {
 pub fn notifies(cfg: &Config, id: &str) -> bool {
     own_settings(cfg, id)
         .and_then(|t| t.get("notify"))
-        .and_then(|v| v.as_bool())
+        .and_then(toml::Value::as_bool)
         .unwrap_or(true)
 }
 
 pub fn is_alert(cfg: &Config, f: &Finding) -> bool {
     f.severity >= threshold(cfg)
+}
+
+/// Every finding category the built-in lenses use, for filters and schemas.
+pub const CATEGORIES: [&str; 8] = [
+    "malware",
+    "vulnerability",
+    "secret",
+    "cooldown",
+    "deprecated",
+    "settings",
+    "agent",
+    "telemetry",
+];
+
+/// Most severe first, then by title: the order every list of findings uses.
+pub fn by_severity(a: &Finding, b: &Finding) -> Ordering {
+    b.severity
+        .cmp(&a.severity)
+        .then_with(|| a.title.cmp(&b.title))
+}
+
+/// The ids of the lenses that exist and are turned on.
+pub fn enabled_ids(cfg: &Config) -> BTreeSet<String> {
+    registry(cfg)
+        .iter()
+        .filter(|r| enabled(cfg, r))
+        .map(|r| r.id().to_string())
+        .collect()
+}
+
+/// Stored results of the lenses that exist and are turned on: what the CLI,
+/// the menu, the window and MCP all show.
+pub fn live_results<'a>(
+    cfg: &Config,
+    results: &'a BTreeMap<String, RunResult>,
+) -> impl Iterator<Item = &'a RunResult> {
+    let enabled = enabled_ids(cfg);
+    results.values().filter(move |r| enabled.contains(&r.id))
 }
 
 /// Build what a lens sees and hand it to `f`.
@@ -219,7 +260,9 @@ pub fn run(cfg: &Config, r: &Registered, offline: bool) -> RunResult {
     let outcome = with_context(cfg, r.id(), offline, |cx| {
         std::fs::create_dir_all(&cx.state_dir)
             .with_context(|| format!("cannot create {}", cx.state_dir.display()))?;
-        r.lens.run(cx)
+        // A panicking lens is reported as failed rather than vanishing.
+        panic::catch_unwind(AssertUnwindSafe(|| r.lens.run(cx)))
+            .unwrap_or_else(|_| Err(anyhow!("the lens crashed")))
     });
     let result = RunResult::new(r, outcome, started.elapsed());
     if let Err(e) = store::record(&result) {
@@ -228,32 +271,51 @@ pub fn run(cfg: &Config, r: &Registered, offline: bool) -> RunResult {
     result
 }
 
-/// Run every enabled lens that is due (or all of them with `force`), in parallel.
-pub fn run_due(cfg: &Config, force: bool, only: &[String], offline: bool) -> Vec<RunResult> {
+/// Whether a lens last run at `last` is due again, by the wall clock (time
+/// asleep counts, so a laptop that slept past an interval runs it at once).
+pub fn is_due(
+    cfg: &Config,
+    r: &Registered,
+    last: Option<chrono::DateTime<chrono::Utc>>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    last.is_none_or(|t| (now - t).to_std().unwrap_or_default() >= interval(cfg, r))
+}
+
+/// The enabled lenses (of `only`, when given) that are due, or all of them with `force`.
+pub fn due(cfg: &Config, force: bool, only: &[String]) -> Vec<Registered> {
     let saved = store::load();
     let now = chrono::Utc::now();
-    let due: Vec<Registered> = registry(cfg)
+    registry(cfg)
         .into_iter()
         .filter(|r| enabled(cfg, r))
         .filter(|r| only.is_empty() || only.iter().any(|o| o == r.id()))
-        .filter(|r| {
-            force
-                || saved.get(r.id()).is_none_or(|last| {
-                    (now - last.ran_at).to_std().unwrap_or_default() >= interval(cfg, r)
-                })
-        })
-        .collect();
+        .filter(|r| force || is_due(cfg, r, saved.get(r.id()).map(|last| last.ran_at), now))
+        .collect()
+}
+
+/// Run every enabled lens that is due (or all of them with `force`), in parallel.
+pub fn run_due(cfg: &Config, force: bool, only: &[String], offline: bool) -> Vec<RunResult> {
+    run_all(cfg, &due(cfg, force, only), offline)
+}
+
+/// Run these lenses now, in parallel.
+pub fn run_all(cfg: &Config, lenses: &[Registered], offline: bool) -> Vec<RunResult> {
     std::thread::scope(|s| {
-        let handles: Vec<_> = due
+        let handles: Vec<_> = lenses
             .iter()
             .map(|r| s.spawn(move || run(cfg, r, offline)))
             .collect();
-        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|e| panic::resume_unwind(e)))
+            .collect()
     })
 }
 
 /// Fix one finding through the lens that reported it, then re-run that lens.
-pub fn fix(cfg: &Config, lens_id: &str, key: &str) -> Result<String> {
+/// Returns what was done and the new result.
+pub fn fix(cfg: &Config, lens_id: &str, key: &str) -> Result<(String, RunResult)> {
     let r = find(cfg, lens_id)?;
     let finding = store::load()
         .get(lens_id)
@@ -267,6 +329,5 @@ pub fn fix(cfg: &Config, lens_id: &str, key: &str) -> Result<String> {
         );
     }
     let done = with_context(cfg, lens_id, false, |cx| r.lens.fix(cx, &finding))?;
-    run(cfg, &r, false);
-    Ok(done)
+    Ok((done, run(cfg, &r, false)))
 }

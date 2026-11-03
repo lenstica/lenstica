@@ -12,11 +12,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
-use lenstica_lens::{Context, Ecosystem, Finding, Lens, Location, Package, Report, Severity};
+use lenstica_lens::{Context, Ecosystem, Finding, Lens, Package, Report, Severity, Source};
 use serde::Deserialize;
-use serde_json::Value;
 
-use crate::http;
+use super::shared::{self, MALWARE_REMEDY, normalise_name};
+use crate::audit;
+use crate::http::{self, Fetched};
 
 pub struct AikidoMalware;
 
@@ -39,16 +40,13 @@ fn list_file(eco: Ecosystem) -> &'static str {
     }
 }
 
-/// PyPI names compare case-insensitively, with `-`, `_` and `.` alike.
-fn normalise(eco: Ecosystem, name: &str) -> String {
-    match eco {
-        Ecosystem::Pypi => name.to_lowercase().replace(['_', '.'], "-"),
-        _ => name.to_string(),
-    }
+fn parse_list(body: &[u8]) -> serde_json::Result<Vec<Entry>> {
+    serde_json::from_slice(body)
 }
 
 /// Download a list again when it is older than `max_age` (unchanged lists
-/// answer 304 and keep the copy on disk).
+/// answer 304 and keep the copy on disk). A new list replaces the old one,
+/// and its ETag is kept, only once the whole list has been read.
 fn refresh(dir: &Path, file: &str, max_age: Duration, cx: &Context) -> Result<()> {
     let path = dir.join(file);
     let fresh = fs::metadata(&path)
@@ -61,94 +59,115 @@ fn refresh(dir: &Path, file: &str, max_age: Duration, cx: &Context) -> Result<()
     }
     let scratch = http::Scratch::new(dir, "download")?;
     let etag = dir.join(format!("{file}.etag"));
-    let etag_arg = etag.to_string_lossy().into_owned();
-    let mut extra = vec!["--etag-save", etag_arg.as_str()];
-    if path.exists() && etag.exists() {
-        extra.extend(["--etag-compare", etag_arg.as_str()]);
+    // Without a list on disk, a 304 would leave nothing to read.
+    if !path.exists() {
+        let _ = fs::remove_file(&etag);
     }
-    http::get_batch_with(
-        &[format!("{BASE}/{file}")],
-        &scratch.0,
-        cx.search_path,
-        &extra,
-    )?;
-    let got = scratch.0.join("0");
-    let body = fs::read(&got).unwrap_or_default();
-    if body.is_empty() {
-        // 304 Not Modified: keep the list, and wait `max_age` before asking again.
-        if path.exists() {
-            let _ = fs::File::options()
+    let got = scratch.0.join("list");
+    let new_etag = scratch.0.join("etag");
+    let url = format!("{BASE}/{file}");
+    match http::get_conditional(&url, &got, &etag, &new_etag, cx.search_path)? {
+        Fetched::NotModified => {
+            // Wait `max_age` before asking again.
+            fs::File::options()
                 .append(true)
                 .open(&path)
-                .and_then(|f| f.set_modified(SystemTime::now()));
-            return Ok(());
+                .and_then(|f| f.set_modified(SystemTime::now()))
+                .with_context(|| format!("cannot touch {}", path.display()))
         }
-        anyhow::bail!("{BASE}/{file} returned nothing");
+        Fetched::Modified => {
+            let body = fs::read(&got).with_context(|| format!("{url} returned nothing"))?;
+            parse_list(&body).with_context(|| format!("{url} is not a malware list"))?;
+            fs::rename(&got, &path).with_context(|| format!("cannot save {}", path.display()))?;
+            if new_etag.exists() {
+                fs::rename(&new_etag, &etag)
+                    .with_context(|| format!("cannot save {}", etag.display()))?;
+            }
+            Ok(())
+        }
     }
-    serde_json::from_slice::<Vec<Value>>(&body)
-        .with_context(|| format!("{BASE}/{file} is not a malware list"))?;
-    fs::rename(&got, &path).with_context(|| format!("cannot save {}", path.display()))
 }
 
 fn load(dir: &Path, eco: Ecosystem) -> Result<List> {
     let path: PathBuf = dir.join(list_file(eco));
     let body = fs::read(&path).with_context(|| format!("no copy of {} yet", list_file(eco)))?;
-    let entries: Vec<Entry> = serde_json::from_slice(&body)
-        .with_context(|| format!("{} is not a malware list", path.display()))?;
+    let entries =
+        parse_list(&body).with_context(|| format!("{} is not a malware list", path.display()))?;
     let mut list = List::new();
     for e in entries {
-        list.entry(normalise(eco, &e.package_name))
+        list.entry(normalise_name(eco, &e.package_name))
             .or_default()
             .push((e.version, e.reason));
     }
     Ok(list)
 }
 
-/// What a reason means: severity, category and a phrase for the title.
-fn judge(reason: &str) -> (Severity, &'static str, &'static str) {
-    match reason.to_ascii_uppercase().as_str() {
-        "PROTESTWARE" => (Severity::High, "malware", "Protestware"),
-        "TELEMETRY" => (Severity::Low, "vulnerability", "Telemetry"),
-        _ => (Severity::Critical, "malware", "Malicious package"),
+/// What a listing says about a package.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Listing {
+    Telemetry,
+    Protestware,
+    Malware,
+}
+
+impl Listing {
+    fn from_reason(reason: &str) -> Self {
+        match reason.to_ascii_uppercase().as_str() {
+            "PROTESTWARE" => Self::Protestware,
+            "TELEMETRY" => Self::Telemetry,
+            _ => Self::Malware,
+        }
+    }
+
+    fn severity(self) -> Severity {
+        match self {
+            Self::Malware => Severity::Critical,
+            Self::Protestware => Severity::High,
+            Self::Telemetry => Severity::Low,
+        }
+    }
+
+    /// The finding category, and the key namespace.
+    fn category(self) -> &'static str {
+        match self {
+            Self::Malware | Self::Protestware => "malware",
+            Self::Telemetry => "telemetry",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Malware => "Malicious package",
+            Self::Protestware => "Protestware",
+            Self::Telemetry => "Telemetry",
+        }
+    }
+
+    fn remedy(self) -> &'static str {
+        match self {
+            Self::Telemetry => {
+                "It reports usage back to its author. Remove it, or turn its telemetry off if it offers a setting."
+            }
+            Self::Malware | Self::Protestware => MALWARE_REMEDY,
+        }
     }
 }
 
-fn ignored(ignore: &[String], p: &Package) -> bool {
-    ignore.iter().any(
-        |r| match r.rsplit_once('@').filter(|(n, _)| !n.is_empty()) {
-            Some((name, version)) => name == p.name && version == p.version,
-            None => *r == p.name,
-        },
-    )
-}
-
-fn finding(pkg: &Package, reason: &str, sources: &[&lenstica_lens::Source]) -> Finding {
-    let (severity, category, what) = judge(reason);
-    let kind = if category == "malware" {
-        "malware"
-    } else {
-        "telemetry"
-    };
-    let remedy = match what {
-        "Telemetry" => {
-            "It reports usage back to its author. Remove it, or turn its telemetry off if it offers a setting."
-        }
-        _ => {
-            "Remove it, then treat this machine as compromised: from another machine, revoke and rotate every credential \
-              this one can reach (npm and GitHub tokens, cloud sign-ins, SSH keys, .env secrets)."
-        }
-    };
+fn finding(pkg: &Package, reason: &str, sources: &[&Source]) -> Finding {
+    let listing = Listing::from_reason(reason);
     let mut f = Finding::new(
         format!(
-            "{kind}|{}|{}|{}",
+            "{}|{}|{}|{}",
+            listing.category(),
             pkg.ecosystem.label(),
             pkg.name,
             pkg.version
         ),
-        severity,
-        category,
+        listing.severity(),
+        listing.category(),
         format!(
-            "{what}: {} {} ({})",
+            "{}: {} {} ({})",
+            listing.title(),
             pkg.name,
             pkg.version,
             pkg.ecosystem.label()
@@ -158,13 +177,9 @@ fn finding(pkg: &Package, reason: &str, sources: &[&lenstica_lens::Source]) -> F
         "Listed as {reason} by Aikido Intel ({BASE}/{}).",
         list_file(pkg.ecosystem)
     ))
-    .remedy(remedy);
+    .remedy(listing.remedy());
     for s in sources {
-        f = f.at(Location {
-            label: s.label.clone(),
-            path: s.path.clone(),
-            line: None,
-        });
+        f = f.at(s.location());
     }
     f
 }
@@ -182,12 +197,7 @@ impl Lens for AikidoMalware {
 
     fn run(&self, cx: &Context) -> Result<Report> {
         let cfg = crate::config::Config::load()?;
-        let hours = cx
-            .settings
-            .get("refresh_hours")
-            .and_then(Value::as_u64)
-            .unwrap_or(6)
-            .max(1);
+        let hours = shared::refresh_hours(cx.settings);
         let mut passing = Vec::new();
         let mut lists: HashMap<Ecosystem, List> = HashMap::new();
         for eco in [Ecosystem::Npm, Ecosystem::Pypi] {
@@ -219,18 +229,18 @@ impl Lens for AikidoMalware {
             let Some(list) = lists.get(&pkg.ecosystem) else {
                 continue;
             };
-            if ignored(&cfg.audit.ignore, pkg) {
+            if audit::ignore_matches(&cfg.audit.ignore, &pkg.name, &pkg.version) {
                 continue;
             }
             checked += 1;
-            let Some(entries) = list.get(&normalise(pkg.ecosystem, &pkg.name)) else {
+            let Some(entries) = list.get(&normalise_name(pkg.ecosystem, &pkg.name)) else {
                 continue;
             };
             // The most serious listing of this exact version, or of every version.
             let hit = entries
                 .iter()
                 .filter(|(v, _)| v == "*" || *v == pkg.version)
-                .max_by_key(|(_, reason)| judge(reason).0);
+                .max_by_key(|(_, reason)| Listing::from_reason(reason));
             if let Some((_, reason)) = hit {
                 findings.push(finding(pkg, reason, &sources));
             }
@@ -259,9 +269,18 @@ mod tests {
 
     #[test]
     fn matches_like_pypi_and_ranks_reasons() {
-        assert_eq!(normalise(Ecosystem::Pypi, "Log_Utils.SDK"), "log-utils-sdk");
-        assert_eq!(normalise(Ecosystem::Npm, "@Scope/Pkg"), "@Scope/Pkg");
-        assert!(judge("MALWARE").0 > judge("PROTESTWARE").0);
-        assert!(judge("PROTESTWARE").0 > judge("TELEMETRY").0);
+        assert_eq!(
+            normalise_name(Ecosystem::Pypi, "Log_Utils.SDK"),
+            "log-utils-sdk"
+        );
+        assert_eq!(normalise_name(Ecosystem::Pypi, "a__b"), "a-b");
+        assert_eq!(normalise_name(Ecosystem::Npm, "@Scope/Pkg"), "@Scope/Pkg");
+        let rank = |r| Listing::from_reason(r).severity();
+        assert!(rank("MALWARE") > rank("PROTESTWARE"));
+        assert!(rank("PROTESTWARE") > rank("TELEMETRY"));
+        // A list with an entry the lens cannot read must not replace a good one.
+        assert!(
+            parse_list(br#"[{"package_name":"x","version":null,"reason":"MALWARE"}]"#).is_err()
+        );
     }
 }

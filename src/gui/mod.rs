@@ -15,8 +15,8 @@ mod menu;
 mod schedule;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use anyhow::Result;
 use serde_json::{Value, json};
@@ -50,13 +50,24 @@ pub struct Shared {
 }
 
 pub struct AppState {
-    pub shared: Mutex<Shared>,
+    shared: Mutex<Shared>,
     requests: Mutex<Sender<Request>>,
     /// Held while this process is the monitor, so `lenstica watch` cannot run alongside.
-    _lock: Mutex<Option<InstanceLock>>,
+    monitor_lock: Mutex<Option<InstanceLock>>,
+}
+
+/// `LENSTICA_DEBUG=1` logs what the window asks for and the menu as text.
+pub fn debug() -> bool {
+    std::env::var_os("LENSTICA_DEBUG").is_some_and(|v| v != "0")
 }
 
 impl AppState {
+    /// The shared state. A thread that panicked while holding it left it
+    /// usable: every update is a whole-field assignment.
+    pub fn lock(&self) -> MutexGuard<'_, Shared> {
+        self.shared.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     pub fn send(&self, request: Request) {
         if let Ok(tx) = self.requests.lock() {
             let _ = tx.send(request);
@@ -83,8 +94,8 @@ fn hand_over(app: &AppHandle, args: &[String]) {
     match args.as_slice() {
         // Opening the app again (Finder, Spotlight, Explorer) shows the window.
         [] | ["window"] => show_window(app),
-        ["window", page] if PAGES.contains(&page.split('/').next().unwrap_or(page)) => {
-            show_page(app, page)
+        ["window", page] if PAGES.contains(&page.split_once('/').map_or(*page, |(p, _)| p)) => {
+            show_page(app, page);
         }
         _ => {}
     }
@@ -108,7 +119,7 @@ pub fn run(open_window: Option<String>) -> Result<()> {
                 ..Default::default()
             }),
             requests: Mutex::new(requests),
-            _lock: Mutex::new(None),
+            monitor_lock: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             commands::action,
@@ -121,7 +132,10 @@ pub fn run(open_window: Option<String>) -> Result<()> {
             menu::create(app.handle())?;
             match system::acquire_lock()? {
                 Some(lock) => {
-                    *app.state::<AppState>()._lock.lock().expect("fresh mutex") = Some(lock);
+                    *app.state::<AppState>()
+                        .monitor_lock
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(lock);
                     if let Some(inbox) = inbox.take() {
                         schedule::start(app.handle().clone(), inbox);
                     }
@@ -229,30 +243,17 @@ pub fn copy_prompt(app: &AppHandle, items: &[(String, Option<String>)]) -> Resul
     let cfg = Config::load()?;
     let results = {
         let shared = app.state::<AppState>();
-        let shared = shared.shared.lock().unwrap_or_else(|p| p.into_inner());
+        let shared = shared.lock();
         shared.results.clone()
     };
-    let mut pairs: Vec<(&lenstica_lens::Finding, &str)> = Vec::new();
-    for (lens, key) in items {
-        let Some(result) = results.get(lens) else {
-            continue;
-        };
-        pairs.extend(
-            result
-                .findings
-                .iter()
-                .filter(|f| match key {
-                    Some(k) => &f.key == k,
-                    None => lenses::is_alert(&cfg, f),
-                })
-                .map(|f| (f, result.title.as_str())),
-        );
-    }
+    let items: Vec<(Option<&str>, Option<&str>)> = items
+        .iter()
+        .map(|(lens, key)| (Some(lens.as_str()), key.as_deref()))
+        .collect();
+    let pairs = crate::prompt::collect(&cfg, &results, &items);
     if pairs.is_empty() {
         anyhow::bail!("those findings are no longer reported");
     }
-    pairs.sort_by(|a, b| b.0.severity.cmp(&a.0.severity));
-    pairs.dedup_by(|a, b| a.0.lens == b.0.lens && a.0.key == b.0.key);
     app.clipboard()
         .write_text(crate::prompt::for_findings(&pairs))
         .map_err(|e| anyhow::anyhow!("cannot copy to the clipboard: {e}"))?;
@@ -281,10 +282,12 @@ pub fn toast(app: &AppHandle, text: impl Into<String>, ok: bool) {
 
 /// Everything the window shows, sent as the `state` event.
 fn state(app: &AppHandle) -> Value {
-    let cfg = Config::load().unwrap_or_default();
+    let loaded = Config::load();
+    let config_error = loaded.as_ref().err().map(|e| format!("{e:#}"));
+    let cfg = loaded.unwrap_or_default();
     let (results, running) = {
         let shared = app.state::<AppState>();
-        let shared = shared.shared.lock().unwrap_or_else(|p| p.into_inner());
+        let shared = shared.lock();
         (shared.results.clone(), shared.running.clone())
     };
     let lenses: Vec<Value> = lenses::registry(&cfg)
@@ -317,6 +320,7 @@ fn state(app: &AppHandle) -> Value {
             "mcpJson": crate::agent::mcp_json(),
         },
         "configPath": paths::tilde(&config::path()),
+        "configError": config_error,
         "alertSeverity": lenses::threshold(&cfg).label(),
         "settings": cfg,
         "lenses": lenses,

@@ -3,6 +3,7 @@
 //! cross-compiling trivial). Batches run eight transfers in parallel.
 
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -10,6 +11,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 
 use crate::exec;
+use crate::files;
 
 const BATCH_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const USER_AGENT: &str = concat!("lenstica/", env!("CARGO_PKG_VERSION"));
@@ -35,11 +37,12 @@ pub fn get_batch_with(urls: &[String], dir: &Path, search: &OsStr, extra: &[&str
     let curl = curl(search)?;
     let mut config = String::new();
     for (i, url) in urls.iter().enumerate() {
-        config.push_str(&format!(
-            "url = {}\noutput = {}\n",
+        let _ = writeln!(
+            config,
+            "url = {}\noutput = {}",
             quote(url),
             quote(&dir.join(i.to_string()).to_string_lossy())
-        ));
+        );
     }
     let config_path = dir.join("batch.curlrc");
     fs::write(&config_path, config)
@@ -82,7 +85,7 @@ pub fn get_batch_with(urls: &[String], dir: &Path, search: &OsStr, extra: &[&str
 pub fn post_json(url: &str, body: &str, dir: &Path, search: &OsStr) -> Result<String> {
     let curl = curl(search)?;
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
-    let body_path = dir.join(format!("post-{}.json", std::process::id()));
+    let body_path = dir.join(format!("post-{}.json", files::unique_suffix()));
     fs::write(&body_path, body).with_context(|| format!("cannot write {}", body_path.display()))?;
     let data_arg = format!("@{}", body_path.to_string_lossy());
     let out = exec::run_timeout(
@@ -117,12 +120,71 @@ pub fn post_json(url: &str, body: &str, dir: &Path, search: &OsStr) -> Result<St
     Ok(out.stdout)
 }
 
-/// A scratch directory for one batch, removed when dropped.
+/// Whether a conditional GET brought a new body.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Fetched {
+    Modified,
+    /// 304: the copy whose ETag was sent is current.
+    NotModified,
+}
+
+/// GET `url` into `output` unless it still matches the ETag in `etag` (when
+/// that file exists); the new ETag goes to `new_etag`. Any HTTP error status
+/// is an error, so a 404 or 503 is never mistaken for "not modified".
+pub fn get_conditional(
+    url: &str,
+    output: &Path,
+    etag: &Path,
+    new_etag: &Path,
+    search: &OsStr,
+) -> Result<Fetched> {
+    let curl = curl(search)?;
+    let output_arg = output.to_string_lossy();
+    let etag_arg = etag.to_string_lossy();
+    let new_etag_arg = new_etag.to_string_lossy();
+    let mut args = vec![
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--location",
+        "--compressed",
+        "--retry",
+        "2",
+        "--connect-timeout",
+        "15",
+        "--max-time",
+        "300",
+        "--user-agent",
+        USER_AGENT,
+        "--write-out",
+        "%{http_code}",
+        "--output",
+        &output_arg,
+        "--etag-save",
+        &new_etag_arg,
+    ];
+    if etag.exists() {
+        args.extend(["--etag-compare", &etag_arg]);
+    }
+    args.push(url);
+    let out = exec::run_timeout(&curl, &args, search, BATCH_TIMEOUT)?;
+    if !out.success {
+        bail!("GET {url} failed: {}", out.error_text());
+    }
+    Ok(if out.stdout.trim() == "304" {
+        Fetched::NotModified
+    } else {
+        Fetched::Modified
+    })
+}
+
+/// A scratch directory for one batch, removed when dropped. Unique per call:
+/// lenses fetching at the same time never share one.
 pub struct Scratch(pub PathBuf);
 
 impl Scratch {
     pub fn new(parent: &Path, name: &str) -> Result<Self> {
-        let dir = parent.join(format!("{name}-{}", std::process::id()));
+        let dir = parent.join(format!("{name}-{}", files::unique_suffix()));
         fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
         Ok(Self(dir))
     }

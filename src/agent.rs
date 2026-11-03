@@ -42,8 +42,7 @@ fn executable() -> String {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.canonicalize().ok())
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "lenstica".to_string())
+        .map_or_else(|| "lenstica".to_string(), |p| p.display().to_string())
 }
 
 /// `claude mcp add ...` for Claude Code.

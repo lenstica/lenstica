@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use lenstica_lens::{Finding, Report};
+use lenstica_lens::{Finding, Report, Severity};
 use serde::{Deserialize, Serialize};
 
 use super::Registered;
@@ -63,17 +63,20 @@ impl RunResult {
                 result.actions = report.actions;
                 result.findings = report.findings;
                 for f in &mut result.findings {
-                    f.lens = result.id.clone();
+                    f.lens.clone_from(&result.id);
                 }
-                result.findings.sort_by(|a, b| {
-                    b.severity
-                        .cmp(&a.severity)
-                        .then_with(|| a.title.cmp(&b.title))
-                });
+                result.findings.sort_by(super::by_severity);
             }
             Err(e) => result.error = Some(format!("{e:#}")),
         }
         result
+    }
+
+    /// The summary, or why the run failed.
+    pub fn status_text(&self) -> String {
+        self.error
+            .as_ref()
+            .map_or_else(|| self.summary.clone(), |e| format!("Failed: {e}"))
     }
 }
 
@@ -82,29 +85,29 @@ fn path() -> PathBuf {
 }
 
 pub fn load() -> BTreeMap<String, RunResult> {
-    files::read_optional(&path())
-        .ok()
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+    files::read_json(&path()).unwrap_or_default()
 }
 
-/// Replace one lens's entry, re-reading the file first: the menu bar app
-/// and a CLI run may record different lenses at the same moment.
+fn save(all: &BTreeMap<String, RunResult>) -> Result<()> {
+    files::write_state(&path(), &serde_json::to_string_pretty(all)?).context("cannot save findings")
+}
+
+/// Replace one lens's entry, re-reading the file first.
 pub fn record(result: &RunResult) -> Result<()> {
-    let mut all = load();
-    // A failed run keeps the previous findings visible next to the error.
-    let mut entry = result.clone();
-    if entry.error.is_some()
-        && let Some(previous) = all.get(&entry.id)
-    {
-        entry.findings = previous.findings.clone();
-        entry.passing = previous.passing.clone();
-        entry.watch = previous.watch.clone();
-    }
-    all.insert(entry.id.clone(), entry);
-    files::write_state(&path(), &serde_json::to_string_pretty(&all)?)
-        .context("cannot save findings")
+    files::with_state_lock(|| {
+        let mut all = load();
+        // A failed run keeps the previous findings visible next to the error.
+        let mut entry = result.clone();
+        if entry.error.is_some()
+            && let Some(previous) = all.get(&entry.id)
+        {
+            entry.findings.clone_from(&previous.findings);
+            entry.passing.clone_from(&previous.passing);
+            entry.watch.clone_from(&previous.watch);
+        }
+        all.insert(entry.id.clone(), entry);
+        save(&all)
+    })
 }
 
 /// Drop results of lenses that no longer exist or are turned off.
@@ -114,47 +117,63 @@ pub fn prune(cfg: &Config) -> Result<()> {
         .filter(|r| super::enabled(cfg, r))
         .map(|r| r.id().to_string())
         .collect();
-    let mut all = load();
-    let before = all.len();
-    all.retain(|id, _| live.contains(id));
-    if all.len() != before {
-        files::write_state(&path(), &serde_json::to_string_pretty(&all)?)
-            .context("cannot save findings")?;
-    }
-    Ok(())
+    files::with_state_lock(|| {
+        let mut all = load();
+        let before = all.len();
+        all.retain(|id, _| live.contains(id));
+        if all.len() == before {
+            return Ok(());
+        }
+        save(&all)
+    })
 }
 
 fn notified_path() -> PathBuf {
     paths::state_dir().join("notified.json")
 }
 
+/// Record which problems of this run are notified, and return the ones not
+/// notified before.
+fn unseen<'a>(result: &RunResult, problems: &[&'a Finding]) -> Result<Vec<&'a Finding>> {
+    files::with_state_lock(|| {
+        let mut seen: BTreeMap<String, BTreeSet<String>> =
+            files::read_json(&notified_path()).unwrap_or_default();
+        let previous = seen.remove(&result.id).unwrap_or_default();
+        let fresh = problems
+            .iter()
+            .copied()
+            .filter(|f| !previous.contains(&f.key))
+            .collect();
+        // A failed run says nothing about whether old problems are gone.
+        let current = if result.error.is_none() {
+            problems.iter().map(|f| f.key.clone()).collect()
+        } else {
+            previous
+        };
+        seen.insert(result.id.clone(), current);
+        files::write_state(&notified_path(), &serde_json::to_string(&seen)?)?;
+        Ok(fresh)
+    })
+}
+
 /// Notify what this run changed, and problems not notified before. Returns
 /// the lines sent. A problem that goes away and comes back is notified again.
 pub fn notify_new(cfg: &Config, result: &RunResult) -> Vec<String> {
-    let mut seen: BTreeMap<String, BTreeSet<String>> = files::read_optional(&notified_path())
-        .ok()
-        .flatten()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default();
     let wanted = super::notifies(cfg, &result.id);
-    let problems: Vec<&Finding> = result
-        .findings
-        .iter()
-        .filter(|f| wanted && f.severity >= super::notify_threshold(cfg))
-        .collect();
-    let current: BTreeSet<String> = problems.iter().map(|f| f.key.clone()).collect();
-    let previous = seen.get(&result.id).cloned().unwrap_or_default();
-    let fresh: Vec<&&Finding> = problems
-        .iter()
-        .filter(|f| !previous.contains(&f.key))
-        .collect();
-    // A failed run says nothing about whether old problems are gone.
-    if result.error.is_none() {
-        seen.insert(result.id.clone(), current);
-        if let Ok(json) = serde_json::to_string(&seen) {
-            let _ = files::write_state(&notified_path(), &json);
-        }
-    }
+    let threshold = super::notify_threshold(cfg);
+    let problems: Vec<&Finding> = if wanted {
+        result
+            .findings
+            .iter()
+            .filter(|f| f.severity >= threshold)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let fresh = unseen(result, &problems).unwrap_or_else(|e| {
+        eprintln!("lenstica: cannot record notifications: {e:#}");
+        Vec::new()
+    });
 
     let mut lines = if cfg.monitor.notify_fixes && wanted {
         result.actions.clone()
@@ -166,7 +185,7 @@ pub fn notify_new(cfg: &Config, result: &RunResult) -> Vec<String> {
             .iter()
             .map(|f| f.severity)
             .max()
-            .unwrap_or(lenstica_lens::Severity::Info);
+            .unwrap_or(Severity::Info);
         lines.push(format!(
             "{}: {} new {} ({} worst)",
             result.title,
@@ -181,9 +200,7 @@ pub fn notify_new(cfg: &Config, result: &RunResult) -> Vec<String> {
         lines.extend(fresh.iter().take(3).map(|f| format!("• {}", f.title)));
     }
     if cfg.monitor.notify && !lines.is_empty() {
-        let critical = fresh
-            .iter()
-            .any(|f| f.severity == lenstica_lens::Severity::Critical);
+        let critical = fresh.iter().any(|f| f.severity == Severity::Critical);
         let title = if critical {
             "Lenstica: CRITICAL"
         } else {

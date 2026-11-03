@@ -14,7 +14,9 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
-use lenstica_lens::{Context, Exclude, Finding, Lens, Location, Report, Result, Severity};
+use lenstica_lens::{
+    Context, Exclude, Finding, Lens, Location, Report, Result, Severity, home_dir, tilde,
+};
 use regex::Regex;
 use serde_json::Value;
 use walkdir::WalkDir;
@@ -38,10 +40,11 @@ impl Lens for Secrets {
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
-        let home = home();
+        let home = home_dir();
+        let now = DateTime::<Utc>::from(cx.now);
         let mut out = Out::default();
         aws(&home, &mut out);
-        aws_sign_in(&home, &mut out);
+        aws_sign_in(&home, now, &mut out);
         npmrc(&home, &mut out);
         cargo_credentials(&env_path("CARGO_HOME", home.join(".cargo")), &mut out);
         simple_token_files(&home, &mut out);
@@ -67,11 +70,25 @@ impl Lens for Secrets {
         let summary = if problems == 0 {
             "No exposed long-lived secrets found".to_string()
         } else {
+            let breakdown: Vec<String> = [
+                Severity::Critical,
+                Severity::High,
+                Severity::Medium,
+                Severity::Low,
+            ]
+            .into_iter()
+            .map(|s| (s, count(s)))
+            .filter(|(_, n)| *n > 0)
+            .map(|(s, n)| format!("{n} {}", s.label()))
+            .collect();
             format!(
-                "{problems} exposures ({} critical, {} high, {} medium)",
-                count(Severity::Critical),
-                count(Severity::High),
-                count(Severity::Medium)
+                "{problems} {} ({})",
+                if problems == 1 {
+                    "exposure"
+                } else {
+                    "exposures"
+                },
+                breakdown.join(", ")
             )
         };
         Ok(Report {
@@ -89,20 +106,6 @@ struct Out {
     passing: Vec<String>,
 }
 
-fn home() -> PathBuf {
-    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
-    std::env::var_os(var)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn tilde(path: &Path) -> String {
-    match path.strip_prefix(home()) {
-        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
-        Err(_) => path.display().to_string(),
-    }
-}
-
 fn read(path: &Path) -> Option<String> {
     std::fs::read(path)
         .ok()
@@ -116,8 +119,7 @@ fn at(path: &Path) -> Location {
 fn env_path(var: &str, default: PathBuf) -> PathBuf {
     std::env::var_os(var)
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or(default)
+        .map_or(default, PathBuf::from)
 }
 
 // ---- value classification (in memory only) -------------------------------------
@@ -134,7 +136,12 @@ fn token_patterns() -> &'static [(&'static str, Regex)] {
             ("npm token", r"\bnpm_[A-Za-z0-9]{36}\b"),
             ("AWS access key", r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),
             ("Anthropic API key", r"\bsk-ant-[A-Za-z0-9_-]{20,}"),
-            ("OpenAI API key", r"\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}"),
+            // Project, service-account and admin keys, or legacy alphanumeric
+            // ones; `sk-ant-` (Anthropic) fits neither.
+            (
+                "OpenAI API key",
+                r"\bsk-(?:proj|svcacct|admin)-[A-Za-z0-9_-]{20,}|\bsk-[A-Za-z0-9]{32,}",
+            ),
             ("Slack token", r"\bxox[abposr]-[A-Za-z0-9-]{10,}"),
             ("Stripe live key", r"\b(?:sk|rk)_live_[A-Za-z0-9]{20,}"),
             ("Google API key", r"\bAIza[0-9A-Za-z_-]{35}"),
@@ -151,23 +158,29 @@ fn token_patterns() -> &'static [(&'static str, Regex)] {
     })
 }
 
-/// The words of an identifier: `CONDUCTOR_JWT_SecretKey` -> conductor, jwt, secret, key.
+/// The words of an identifier: `CONDUCTOR_JWT_SecretKey` -> conductor, jwt,
+/// secret, key; `DBPassword` -> db, password.
 fn words(name: &str) -> Vec<String> {
+    let chars: Vec<char> = name.chars().collect();
     let mut out = Vec::new();
     let mut word = String::new();
-    let mut prev_lower = false;
-    for c in name.chars() {
+    for (i, &c) in chars.iter().enumerate() {
         if !c.is_ascii_alphanumeric() {
             if !word.is_empty() {
                 out.push(std::mem::take(&mut word));
             }
-            prev_lower = false;
             continue;
         }
-        if c.is_ascii_uppercase() && prev_lower && !word.is_empty() {
+        let prev = i.checked_sub(1).map(|j| chars[j]);
+        let next = chars.get(i + 1);
+        // camelCase (`jwtSecret`), and the end of an acronym (`JWTSecret`).
+        let boundary = c.is_ascii_uppercase()
+            && (prev.is_some_and(|p| p.is_ascii_lowercase() || p.is_ascii_digit())
+                || (prev.is_some_and(|p| p.is_ascii_uppercase())
+                    && next.is_some_and(char::is_ascii_lowercase)));
+        if boundary && !word.is_empty() {
             out.push(std::mem::take(&mut word));
         }
-        prev_lower = c.is_ascii_lowercase() || c.is_ascii_digit();
         word.push(c.to_ascii_lowercase());
     }
     if !word.is_empty() {
@@ -177,7 +190,8 @@ fn words(name: &str) -> Vec<String> {
 }
 
 /// A name that says it holds a secret, by whole words: `DB_PASSWORD`,
-/// `ClientSecret`, `API_KEY`, but not `Authority` or `TOKENIZER_PATH`.
+/// `ClientSecret`, `API_KEY`, but not `Authority`, `TOKENIZER_PATH` or
+/// `AUTH_URL` (a name ending in a word for where or how, not what).
 fn secret_name(name: &str) -> bool {
     const WORDS: &[&str] = &[
         "secret",
@@ -204,7 +218,16 @@ fn secret_name(name: &str) -> bool {
         ("connection", "string"),
         ("signing", "key"),
     ];
+    const NOT_SECRET_LAST: &[&str] = &[
+        "url", "uri", "endpoint", "domain", "host", "path", "file", "enabled", "lifetime",
+        "expiry", "ttl", "type", "header",
+    ];
     let w = words(name);
+    if w.last()
+        .is_some_and(|l| NOT_SECRET_LAST.contains(&l.as_str()))
+    {
+        return false;
+    }
     w.iter().any(|x| WORDS.contains(&x.as_str()))
         || w.windows(2)
             .any(|p| PAIRS.contains(&(p[0].as_str(), p[1].as_str())))
@@ -213,12 +236,10 @@ fn secret_name(name: &str) -> bool {
 /// A real-looking secret rather than an empty value, a placeholder or a reference
 /// to a secret manager (`op://…`, `${VAR}`).
 fn literal(value: &str) -> bool {
-    let v = value.trim().trim_matches(|c| c == '"' || c == '\'');
+    let v = value.trim().trim_matches(['"', '\'']);
     let lower = v.to_ascii_lowercase();
     v.len() >= 8
-        && !v.starts_with('$')
-        && !v.starts_with('`')
-        && !v.starts_with('<')
+        && !v.starts_with(['$', '`', '<'])
         && !lower.starts_with("op://")
         && !lower.starts_with("your")
         && ![
@@ -234,18 +255,18 @@ fn literal(value: &str) -> bool {
         && !v.chars().all(|c| c == 'x' || c == '*' || c == '.')
 }
 
-fn token_kinds(text: &str) -> Vec<&'static str> {
+/// The kind of the first known token shape in `text`.
+fn token_kind(text: &str) -> Option<&'static str> {
     token_patterns()
         .iter()
-        .filter(|(_, re)| re.is_match(text))
+        .find(|(_, re)| re.is_match(text))
         .map(|(name, _)| *name)
-        .collect()
 }
 
 /// Is this `name = value` pair a secret? By the shape of the value, or a
 /// secret-sounding name with a literal value.
 fn is_secret(name: &str, value: &str) -> bool {
-    !token_kinds(value).is_empty() || (secret_name(name) && literal(value))
+    token_kind(value).is_some() || (secret_name(name) && literal(value))
 }
 
 fn list(names: &BTreeSet<String>, max: usize) -> String {
@@ -264,8 +285,8 @@ fn ini_sections(src: &str) -> Vec<(String, Vec<(String, String)>)> {
         if line.starts_with('#') || line.starts_with(';') || line.is_empty() {
             continue;
         }
-        if line.starts_with('[') && line.ends_with(']') {
-            sections.push((line[1..line.len() - 1].trim().to_string(), Vec::new()));
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            sections.push((name.trim().to_string(), Vec::new()));
         } else if let Some((k, v)) = line.split_once('=') {
             sections
                 .last_mut()
@@ -283,8 +304,7 @@ fn aws(home: &Path, out: &mut Out) {
         home.join(".aws").join("credentials"),
     );
     let Some(src) = read(&path) else {
-        out.passing
-            .push("AWS: no ~/.aws/credentials file".to_string());
+        out.passing.push(format!("AWS: no {} file", tilde(&path)));
         return;
     };
     let (mut long_lived, mut temporary) = (BTreeSet::new(), BTreeSet::new());
@@ -313,7 +333,7 @@ fn aws(home: &Path, out: &mut Out) {
     }
     if !temporary.is_empty() {
         out.findings.push(
-            Finding::new("aws-temporary", Severity::Low, "secret", "Temporary AWS credentials stored in ~/.aws/credentials")
+            Finding::new("aws-temporary", Severity::Low, "secret", format!("Temporary AWS credentials stored in {}", tilde(&path)))
                 .detail(format!("Profiles: {}. They expire, but anything running as you can use them until then.", list(&temporary, 10)))
                 .remedy("Prefer `aws sso login` profiles or aws-vault over writing session keys into the credentials file.")
                 .at(at(&path)),
@@ -350,8 +370,7 @@ fn json_files(dir: &Path) -> Vec<(PathBuf, Value)> {
 
 /// SSO is far better than permanent keys, but its cache is still usable by
 /// anything running as you until it expires, so it is listed (below the alert line).
-fn aws_sign_in(home: &Path, out: &mut Out) {
-    let now = Utc::now();
+fn aws_sign_in(home: &Path, now: DateTime<Utc>, out: &mut Out) {
     let sso_dir = home.join(".aws").join("sso").join("cache");
     let mut sessions = Vec::new();
     for (_, v) in json_files(&sso_dir) {
@@ -366,7 +385,8 @@ fn aws_sign_in(home: &Path, out: &mut Out) {
             sessions.push((expires, v.get("refreshToken").is_some()));
         }
     }
-    let roles = json_files(&home.join(".aws").join("cli").join("cache"))
+    let cli_dir = home.join(".aws").join("cli").join("cache");
+    let roles = json_files(&cli_dir)
         .iter()
         .filter(|(_, v)| {
             v.pointer("/Credentials/Expiration")
@@ -378,6 +398,27 @@ fn aws_sign_in(home: &Path, out: &mut Out) {
     if sessions.is_empty() && roles == 0 {
         out.passing
             .push("AWS: no active SSO session or cached role credentials".to_string());
+        return;
+    }
+    if sessions.is_empty() {
+        out.findings.push(
+            Finding::new(
+                "aws-sign-in",
+                Severity::Info,
+                "secret",
+                "Cached AWS role credentials on disk",
+            )
+            .detail(format!(
+                "{roles} cached role {}. Anything running as you can use them until they expire.",
+                if roles == 1 {
+                    "credential"
+                } else {
+                    "credentials"
+                }
+            ))
+            .remedy("They expire on their own; delete ~/.aws/cli/cache to end them sooner.")
+            .at(at(&cli_dir)),
+        );
         return;
     }
     let renewable = sessions.iter().any(|(_, refresh)| *refresh);
@@ -409,21 +450,16 @@ fn cargo_credentials(dir: &Path, out: &mut Out) {
     for name in ["credentials.toml", "credentials"] {
         let path = dir.join(name);
         let Some(src) = read(&path) else { continue };
-        let mut section = String::new();
-        let mut registries = BTreeSet::new();
-        for line in src.lines().map(str::trim) {
-            if line.starts_with('[') && line.ends_with(']') {
-                section = line[1..line.len() - 1].trim().to_string();
-            } else if let Some((k, v)) = line.split_once('=')
-                && k.trim() == "token"
-                && literal(v)
-            {
-                registries.insert(match section.strip_prefix("registries.") {
-                    Some(r) => r.to_string(),
-                    None => "crates.io".to_string(),
-                });
-            }
-        }
+        let registries: BTreeSet<String> = ini_sections(&src)
+            .into_iter()
+            .filter(|(_, keys)| keys.iter().any(|(k, v)| k == "token" && literal(v)))
+            .map(|(section, _)| {
+                section
+                    .strip_prefix("registries.")
+                    .unwrap_or("crates.io")
+                    .to_string()
+            })
+            .collect();
         if registries.is_empty() {
             continue;
         }
@@ -432,7 +468,7 @@ fn cargo_credentials(dir: &Path, out: &mut Out) {
                 format!("cargo-token|{name}|{}", list(&registries, 20)),
                 Severity::High,
                 "secret",
-                format!("Cargo registry token stored in plain text in ~/.cargo/{name}"),
+                format!("Cargo registry token stored in plain text in {}", tilde(&path)),
             )
             .detail(format!(
                 "Registries: {}. Anyone with it can publish new versions of your crates, which is how a supply-chain worm spreads.",
@@ -453,18 +489,21 @@ fn cargo_credentials(dir: &Path, out: &mut Out) {
 
 fn npmrc(home: &Path, out: &mut Out) {
     let path = env_path("NPM_CONFIG_USERCONFIG", home.join(".npmrc"));
-    let Some(src) = read(&path) else { return };
+    let Some(src) = read(&path) else {
+        out.passing.push(format!("npm: no {} file", tilde(&path)));
+        return;
+    };
     let registries: BTreeSet<String> = src
         .lines()
         .filter_map(|l| l.split_once('='))
+        // A commented-out token is still a token on disk; drop only the marker.
+        .map(|(k, v)| (k.trim().trim_start_matches([';', '#']).trim(), v))
         .filter(|(k, v)| {
-            let k = k.trim();
             (k.ends_with("_authToken") || k.ends_with("_auth") || k.ends_with("_password"))
                 && literal(v)
         })
         .map(|(k, _)| {
-            k.trim()
-                .rsplit_once(':')
+            k.rsplit_once(':')
                 .map_or("default registry", |(r, _)| r)
                 .trim_start_matches("//")
                 .to_string()
@@ -476,7 +515,7 @@ fn npmrc(home: &Path, out: &mut Out) {
         return;
     }
     out.findings.push(
-        Finding::new(format!("npm-token|{}", list(&registries, 20)), Severity::High, "secret", "npm token stored in ~/.npmrc")
+        Finding::new(format!("npm-token|{}", list(&registries, 20)), Severity::High, "secret", format!("npm token stored in {}", tilde(&path)))
             .detail(format!(
                 "Registries: {}. With a publish token, malware can push poisoned versions of your packages, which is how \
                  the Shai-Hulud worm spread.",
@@ -487,86 +526,96 @@ fn npmrc(home: &Path, out: &mut Out) {
     );
 }
 
-/// (file, finding key, title, remedy, "does its content hold a credential?")
-type TokenFile<'a> = (PathBuf, &'a str, &'a str, &'a str, &'a dyn Fn(&str) -> bool);
+/// A file whose content alone means a plaintext credential.
+struct TokenFile {
+    path: PathBuf,
+    key: &'static str,
+    title: &'static str,
+    remedy: &'static str,
+    holds_credential: fn(&str) -> bool,
+}
+
+fn has_url_password(src: &str) -> bool {
+    src.lines().any(|l| l.contains("://") && l.contains('@'))
+}
 
 /// Files whose mere content means a plaintext credential.
 fn simple_token_files(home: &Path, out: &mut Out) {
     let gh = env_path("GH_CONFIG_DIR", home.join(".config").join("gh")).join("hosts.yml");
-    let checks: [TokenFile; 6] = [
-        (
-            gh.clone(),
-            "gh-token",
-            "GitHub CLI token stored in plain text",
-            "`gh auth logout` and `gh auth login` again: gh keeps the token in the system keychain unless told not to.",
-            &|s: &str| {
+    let checks = [
+        TokenFile {
+            path: gh,
+            key: "gh-token",
+            title: "GitHub CLI token stored in plain text",
+            remedy: "`gh auth logout` and `gh auth login` again: gh keeps the token in the system keychain unless told not to.",
+            holds_credential: |s| {
                 s.lines().any(|l| {
                     l.trim_start().starts_with("oauth_token:")
                         && literal(l.split_once(':').map_or("", |x| x.1))
                 })
             },
-        ),
-        (
-            home.join(".git-credentials"),
-            "git-credentials",
-            "Git passwords stored in ~/.git-credentials",
-            "Use the platform credential helper (`git config --global credential.helper osxkeychain` / `manager`) and delete the file.",
-            &|s: &str| s.lines().any(|l| l.contains("://") && l.contains('@')),
-        ),
-        (
-            home.join(".config").join("git").join("credentials"),
-            "git-credentials-xdg",
-            "Git passwords stored in ~/.config/git/credentials",
-            "Use the platform credential helper and delete the file.",
-            &|s: &str| s.lines().any(|l| l.contains("://") && l.contains('@')),
-        ),
-        (
-            home.join(if cfg!(windows) { "_netrc" } else { ".netrc" }),
-            "netrc",
-            "Passwords stored in ~/.netrc",
-            "Remove the password entries; use a credential helper or the tool's own login.",
-            &|s: &str| s.split_whitespace().any(|w| w == "password"),
-        ),
-        (
-            home.join(".pypirc"),
-            "pypirc",
-            "PyPI password or token stored in ~/.pypirc",
-            "Use trusted publishing from CI, or keyring, instead of a stored token.",
-            &|s: &str| {
+        },
+        TokenFile {
+            path: home.join(".git-credentials"),
+            key: "git-credentials",
+            title: "Git passwords stored in ~/.git-credentials",
+            remedy: "Use the platform credential helper (`git config --global credential.helper osxkeychain` / `manager`) and delete the file.",
+            holds_credential: has_url_password,
+        },
+        TokenFile {
+            path: home.join(".config").join("git").join("credentials"),
+            key: "git-credentials-xdg",
+            title: "Git passwords stored in ~/.config/git/credentials",
+            remedy: "Use the platform credential helper and delete the file.",
+            holds_credential: has_url_password,
+        },
+        TokenFile {
+            path: home.join(if cfg!(windows) { "_netrc" } else { ".netrc" }),
+            key: "netrc",
+            title: "Passwords stored in ~/.netrc",
+            remedy: "Remove the password entries; use a credential helper or the tool's own login.",
+            holds_credential: |s| s.split_whitespace().any(|w| w == "password"),
+        },
+        TokenFile {
+            path: home.join(".pypirc"),
+            key: "pypirc",
+            title: "PyPI password or token stored in ~/.pypirc",
+            remedy: "Use trusted publishing from CI, or keyring, instead of a stored token.",
+            holds_credential: |s| {
                 ini_sections(s)
                     .iter()
                     .flat_map(|(_, kv)| kv)
                     .any(|(k, v)| k == "password" && literal(v))
             },
-        ),
-        (
-            home.join(".terraform.d").join("credentials.tfrc.json"),
-            "terraform-token",
-            "Terraform Cloud token stored in plain text",
-            "Use a credentials helper, or `terraform logout` when not needed.",
-            &|s: &str| s.contains("\"token\""),
-        ),
+        },
+        TokenFile {
+            path: home.join(".terraform.d").join("credentials.tfrc.json"),
+            key: "terraform-token",
+            title: "Terraform Cloud token stored in plain text",
+            remedy: "Use a credentials helper, or `terraform logout` when not needed.",
+            holds_credential: |s| s.contains("\"token\""),
+        },
     ];
-    for (path, key, title, remedy, hit) in checks {
-        if let Some(src) = read(&path)
-            && hit(&src)
-        {
+    for t in checks {
+        let Some(src) = read(&t.path) else { continue };
+        if (t.holds_credential)(&src) {
             out.findings.push(
-                Finding::new(key, Severity::High, "secret", title)
-                    .remedy(remedy)
-                    .at(at(&path)),
+                Finding::new(t.key, Severity::High, "secret", t.title)
+                    .remedy(t.remedy)
+                    .at(at(&t.path)),
             );
+        } else if t.key == "gh-token" && !src.contains("oauth_token:") {
+            out.passing
+                .push("GitHub CLI: token kept in the system keychain".to_string());
         }
-    }
-    if read(&gh).is_some_and(|s| !s.contains("oauth_token:")) {
-        out.passing
-            .push("GitHub CLI: token kept in the system keychain".to_string());
     }
 }
 
 fn docker(home: &Path, out: &mut Out) {
     let path = env_path("DOCKER_CONFIG", home.join(".docker")).join("config.json");
     let Some(doc) = read(&path).and_then(|s| serde_json::from_str::<Value>(&s).ok()) else {
+        out.passing
+            .push(format!("Docker: no readable {}", tilde(&path)));
         return;
     };
     let inline: BTreeSet<String> = doc
@@ -599,35 +648,56 @@ fn docker(home: &Path, out: &mut Out) {
     );
 }
 
-fn kube(home: &Path, out: &mut Out) {
-    let path = std::env::var_os("KUBECONFIG")
-        .and_then(|v| std::env::split_paths(&v).next())
-        .unwrap_or_else(|| home.join(".kube").join("config"));
-    let Some(src) = read(&path) else { return };
-    let kinds: BTreeSet<&str> = src
-        .lines()
-        .map(str::trim_start)
-        .filter_map(|l| {
-            ["token:", "client-key-data:", "password:"]
-                .into_iter()
-                .find(|k| l.starts_with(k) && literal(&l[k.len()..]))
+/// Every file in `KUBECONFIG` (kubectl merges them all), else `~/.kube/config`.
+fn kubeconfigs(home: &Path) -> Vec<PathBuf> {
+    let listed: Vec<PathBuf> = std::env::var_os("KUBECONFIG")
+        .map(|v| {
+            std::env::split_paths(&v)
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
         })
-        .collect();
-    if kinds.is_empty() {
-        out.passing
-            .push("Kubernetes: no static credentials in kubeconfig".to_string());
-        return;
+        .unwrap_or_default();
+    if listed.is_empty() {
+        vec![home.join(".kube").join("config")]
+    } else {
+        listed
     }
-    out.findings.push(
-        Finding::new("kube-static", Severity::High, "secret", "Static Kubernetes credentials in kubeconfig")
-            .detail(format!(
-                "{} stores {} directly.",
-                tilde(&path),
-                kinds.iter().map(|k| k.trim_end_matches(':')).collect::<Vec<_>>().join(", ")
-            ))
-            .remedy("Use an `exec` credential plugin (aws eks get-token, gke-gcloud-auth-plugin, kubelogin) that issues short-lived tokens.")
-            .at(at(&path)),
-    );
+}
+
+fn kube(home: &Path, out: &mut Out) {
+    let mut clean = Vec::new();
+    for path in kubeconfigs(home) {
+        let Some(src) = read(&path) else { continue };
+        let kinds: BTreeSet<&str> = src
+            .lines()
+            .map(str::trim_start)
+            .filter_map(|l| {
+                ["token:", "client-key-data:", "password:"]
+                    .into_iter()
+                    .find(|k| l.strip_prefix(k).is_some_and(literal))
+            })
+            .collect();
+        if kinds.is_empty() {
+            clean.push(tilde(&path));
+            continue;
+        }
+        out.findings.push(
+            Finding::new(format!("kube-static|{}", tilde(&path)), Severity::High, "secret", "Static Kubernetes credentials in kubeconfig")
+                .detail(format!(
+                    "{} stores {} directly.",
+                    tilde(&path),
+                    kinds.iter().map(|k| k.trim_end_matches(':')).collect::<Vec<_>>().join(", ")
+                ))
+                .remedy("Use an `exec` credential plugin (aws eks get-token, gke-gcloud-auth-plugin, kubelogin) that issues short-lived tokens.")
+                .at(at(&path)),
+        );
+    }
+    if !clean.is_empty() {
+        out.passing.push(format!(
+            "Kubernetes: no static credentials in {}",
+            clean.join(", ")
+        ));
+    }
 }
 
 // ---- SSH keys ---------------------------------------------------------------------
@@ -669,6 +739,7 @@ fn key_is_encrypted(src: &str) -> Option<bool> {
 fn ssh(home: &Path, out: &mut Out) {
     let dir = home.join(".ssh");
     let Ok(entries) = std::fs::read_dir(&dir) else {
+        out.passing.push("SSH: no ~/.ssh folder".to_string());
         return;
     };
     let mut bare = Vec::new();
@@ -693,10 +764,17 @@ fn ssh(home: &Path, out: &mut Out) {
                 .at(at(path)),
         );
     }
-    if bare.is_empty() {
-        out.passing.push(format!(
-            "SSH: {protected} private keys, all passphrase-protected"
-        ));
+    match (bare.is_empty(), protected) {
+        (false, _) => {}
+        (true, 0) => out
+            .passing
+            .push("SSH: no private keys in ~/.ssh".to_string()),
+        (true, 1) => out
+            .passing
+            .push("SSH: 1 private key, passphrase-protected".to_string()),
+        (true, n) => out
+            .passing
+            .push(format!("SSH: {n} private keys, all passphrase-protected")),
     }
 }
 
@@ -704,16 +782,34 @@ fn gcloud(home: &Path, out: &mut Out) {
     let dir = env_path("CLOUDSDK_CONFIG", home.join(".config").join("gcloud"));
     let adc = dir.join("application_default_credentials.json");
     if let Some(doc) = read(&adc).and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
-        let (severity, what) = match doc.get("type").and_then(Value::as_str) {
-            Some("service_account") => (Severity::Critical, "a service-account private key"),
-            _ => (Severity::High, "a refresh token for your Google account"),
+        let held = match doc.get("type").and_then(Value::as_str) {
+            Some("service_account") => Some((Severity::Critical, "a service-account private key")),
+            Some("authorized_user") => {
+                Some((Severity::High, "a refresh token for your Google account"))
+            }
+            Some("impersonated_service_account") => Some((
+                Severity::High,
+                "a refresh token used to impersonate a service account",
+            )),
+            Some("external_account_authorized_user") => {
+                Some((Severity::High, "a refresh token for a federated account"))
+            }
+            // Workload identity federation and unknown types point to a token
+            // source rather than holding a secret.
+            _ => None,
         };
-        out.findings.push(
-            Finding::new("gcloud-adc", severity, "secret", "Google Cloud application-default credentials on disk")
-                .detail(format!("{} holds {what}.", tilde(&adc)))
-                .remedy("Prefer service-account impersonation and `gcloud auth application-default revoke` when not needed; never keep service-account keys on a laptop.")
-                .at(at(&adc)),
-        );
+        match held {
+            Some((severity, what)) => out.findings.push(
+                Finding::new("gcloud-adc", severity, "secret", "Google Cloud application-default credentials on disk")
+                    .detail(format!("{} holds {what}.", tilde(&adc)))
+                    .remedy("Prefer service-account impersonation and `gcloud auth application-default revoke` when not needed; never keep service-account keys on a laptop.")
+                    .at(at(&adc)),
+            ),
+            None => out.passing.push(format!(
+                "Google Cloud: {} holds no stored secret",
+                tilde(&adc)
+            )),
+        }
     }
     let db = dir.join("credentials.db");
     if db.exists() {
@@ -732,11 +828,30 @@ fn gcloud(home: &Path, out: &mut Out) {
 
 // ---- shell startup files and history ---------------------------------------------------
 
+/// `NAME=value`, `export NAME=value`, or fish's `set -x NAME value`.
+fn assignment() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r"^\s*(?:(?:export\s+)?(?P<sh>[A-Za-z_][A-Za-z0-9_]*)=|set\s+-[a-zA-Z]*x[a-zA-Z]*\s+(?P<fish>[A-Za-z_][A-Za-z0-9_]*)\s+)(?P<value>.+)$",
+        )
+        .expect("valid pattern")
+    })
+}
+
+/// What a startup-file line exposes: the variable it sets to a secret, or the
+/// kind of token a command carries (`curl -H "Authorization: Bearer ghp_…"`).
+fn startup_secret(line: &str) -> Option<String> {
+    match assignment().captures(line) {
+        Some(c) => {
+            let name = c.name("sh").or_else(|| c.name("fish"))?.as_str();
+            (name != "PWD" && is_secret(name, &c["value"])).then(|| name.to_string())
+        }
+        None => token_kind(line).map(|kind| format!("{kind} in a command")),
+    }
+}
+
 fn shell_startup(home: &Path, out: &mut Out) {
-    let assignment = Regex::new(
-        r"^\s*(?:export\s+|set\s+-[a-zA-Z]*x[a-zA-Z]*\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:=|\s+)(.+)$",
-    )
-    .expect("valid pattern");
     let files = [
         ".zshrc",
         ".zprofile",
@@ -752,9 +867,7 @@ fn shell_startup(home: &Path, out: &mut Out) {
         let names: BTreeSet<String> = src
             .lines()
             .filter(|l| !l.trim_start().starts_with('#'))
-            .filter_map(|l| assignment.captures(l))
-            .filter(|c| c[1] != *"PWD" && c[1] != *"OLDPWD" && is_secret(&c[1], &c[2]))
-            .map(|c| c[1].to_string())
+            .filter_map(startup_secret)
             .collect();
         if names.is_empty() {
             continue;
@@ -844,50 +957,91 @@ fn env_file(name: &str) -> bool {
         .any(|s| name.ends_with(s))
 }
 
+/// Secrets are small files; anything bigger is not one of these.
+const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// `name` ends with `suffix`, ignoring ASCII case (`KEY.PEM`).
+fn ends_with_ci(name: &str, suffix: &str) -> bool {
+    name.len()
+        .checked_sub(suffix.len())
+        .and_then(|start| name.get(start..))
+        .is_some_and(|end| end.eq_ignore_ascii_case(suffix))
+}
+
 fn interesting(name: &str) -> bool {
     env_file(name)
-        || (name.starts_with("appsettings") && name.ends_with(".json"))
+        || (name.starts_with("appsettings") && ends_with_ci(name, ".json"))
         || name == "secrets.json"
-        || name.ends_with(".tfstate")
-        || name.ends_with(".pem")
-        || name.ends_with(".key")
-        || name.ends_with(".p12")
-        || name.ends_with(".pfx")
-        || (name.ends_with(".json")
+        || [".tfstate", ".pem", ".key", ".p12", ".pfx"]
+            .iter()
+            .any(|ext| ends_with_ci(name, ext))
+        || (ends_with_ci(name, ".json")
             && (name.contains("credential")
                 || name.contains("service-account")
                 || name.contains("serviceaccount")))
 }
 
-/// Names of the secrets a file holds, or a description for whole-file secrets.
-fn file_secrets(name: &str, src: &str) -> BTreeSet<String> {
-    let mut found = BTreeSet::new();
+/// What a file exposes.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Found {
+    /// The settings or variables holding secrets.
+    Names(BTreeSet<String>),
+    /// The file itself is the secret (a key, a certificate bundle, Terraform state).
+    WholeFile(&'static str),
+}
+
+impl Found {
+    fn describe(&self, max: usize) -> String {
+        match self {
+            Found::Names(names) => list(names, max),
+            Found::WholeFile(what) => (*what).to_string(),
+        }
+    }
+}
+
+/// A variable name in a `.env` file, not a line that merely contains `=`
+/// (a URL with `?token=` must never be shown as a name).
+fn env_name(key: &str) -> bool {
+    !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+fn file_secrets(name: &str, src: &str) -> Option<Found> {
     if env_file(name) {
+        let mut found = BTreeSet::new();
         for line in src.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
             let line = line.strip_prefix("export ").unwrap_or(line);
             if let Some((k, v)) = line.split_once('=')
-                && is_secret(k.trim(), v)
+                && let k = k.trim()
+                && env_name(k)
+                && is_secret(k, v)
             {
-                found.insert(k.trim().to_string());
+                found.insert(k.to_string());
             }
         }
-    } else if name.ends_with(".json") {
+        (!found.is_empty()).then_some(Found::Names(found))
+    } else if ends_with_ci(name, ".json") {
+        let mut found = BTreeSet::new();
         if let Ok(doc) = serde_json::from_str::<Value>(src) {
             json_secrets(&doc, "", &mut found);
         }
-    } else if name.ends_with(".tfstate") {
-        if src.contains("\"sensitive_attributes\"")
+        (!found.is_empty()).then_some(Found::Names(found))
+    } else if ends_with_ci(name, ".tfstate") {
+        (src.contains("\"sensitive_attributes\"")
             || src.contains("\"password\"")
-            || src.contains("\"secret")
-        {
-            found.insert("Terraform state (holds resource secrets in plain text)".to_string());
-        }
-    } else if name.ends_with(".p12") || name.ends_with(".pfx") {
-        found.insert("certificate bundle with a private key".to_string());
+            || src.contains("\"secret"))
+        .then_some(Found::WholeFile(
+            "Terraform state (holds resource secrets in plain text)",
+        ))
+    } else if ends_with_ci(name, ".p12") || ends_with_ci(name, ".pfx") {
+        Some(Found::WholeFile("certificate bundle with a private key"))
     } else if src.contains("PRIVATE KEY-----") {
-        found.insert("private key".to_string());
+        Some(Found::WholeFile("private key"))
+    } else {
+        None
     }
-    found
 }
 
 fn json_secrets(v: &Value, path: &str, found: &mut BTreeSet<String>) {
@@ -905,8 +1059,8 @@ fn json_secrets(v: &Value, path: &str, found: &mut BTreeSet<String>) {
         Value::Array(items) => items.iter().for_each(|i| json_secrets(i, path, found)),
         Value::String(s) => {
             let leaf = path.rsplit('.').next().unwrap_or(path);
-            let connection = s.to_ascii_lowercase().contains("password=")
-                && !s.to_ascii_lowercase().contains("password=;");
+            let lower = s.to_ascii_lowercase();
+            let connection = lower.contains("password=") && !lower.contains("password=;");
             if is_secret(leaf, s) || connection {
                 found.insert(path.to_string());
             }
@@ -915,43 +1069,69 @@ fn json_secrets(v: &Value, path: &str, found: &mut BTreeSet<String>) {
     }
 }
 
-/// Several sibling folders each holding one key file (`vpn-users/<person>/<person>.key`)
-/// read better as one finding about their parent folder.
+/// Several key files in one folder (`certs/{a,b,c}.key`), or in sibling
+/// folders (`vpn-users/<person>/<person>.key`), read better as one finding
+/// about that folder.
 fn collapse_siblings(
-    groups: BTreeMap<(String, BTreeSet<String>), Vec<PathBuf>>,
-) -> BTreeMap<(String, BTreeSet<String>), Vec<PathBuf>> {
-    const MIN_SIBLINGS: usize = 3;
-    let whole_file = |names: &BTreeSet<String>| names.iter().any(|n| n.contains(' '));
-    let grandparent = |p: &Path| p.parent().and_then(Path::parent).map(Path::to_path_buf);
-    let mut by_parent: BTreeMap<(PathBuf, BTreeSet<String>), usize> = BTreeMap::new();
-    for ((_, names), copies) in &groups {
-        if whole_file(names)
-            && copies.len() == 1
-            && let Some(gp) = grandparent(&copies[0])
-        {
-            *by_parent.entry((gp, names.clone())).or_default() += 1;
+    groups: BTreeMap<(String, Found), Vec<PathBuf>>,
+) -> BTreeMap<(String, Found), Vec<PathBuf>> {
+    const MIN_FILES: usize = 3;
+    // The folder and the one above it, nearest first.
+    let folders = |p: &Path| -> Vec<PathBuf> {
+        p.ancestors()
+            .skip(1)
+            .take(2)
+            .map(Path::to_path_buf)
+            .collect()
+    };
+    let single = |found: &Found, copies: &[PathBuf]| {
+        matches!(found, Found::WholeFile(_)) && copies.len() == 1
+    };
+    let mut per_folder: BTreeMap<(PathBuf, Found), usize> = BTreeMap::new();
+    for ((_, found), copies) in &groups {
+        if single(found, copies) {
+            for dir in folders(&copies[0]) {
+                *per_folder.entry((dir, found.clone())).or_default() += 1;
+            }
         }
     }
-    let mut out: BTreeMap<(String, BTreeSet<String>), Vec<PathBuf>> = BTreeMap::new();
-    for ((rel, names), copies) in groups {
-        let collapse = whole_file(&names) && copies.len() == 1;
-        let target = collapse
-            .then(|| grandparent(&copies[0]))
-            .flatten()
-            .filter(|gp| {
-                by_parent
-                    .get(&(gp.clone(), names.clone()))
-                    .is_some_and(|n| *n >= MIN_SIBLINGS)
-            });
-        match target {
-            Some(gp) => out
-                .entry((format!("{}/*", tilde(&gp)), names))
-                .or_default()
-                .extend(copies),
-            None => out.entry((rel, names)).or_default().extend(copies),
-        }
+    let mut out: BTreeMap<(String, Found), Vec<PathBuf>> = BTreeMap::new();
+    for ((rel, found), copies) in groups {
+        let target = single(&found, &copies)
+            .then(|| {
+                folders(&copies[0]).into_iter().find(|dir| {
+                    per_folder
+                        .get(&(dir.clone(), found.clone()))
+                        .is_some_and(|n| *n >= MIN_FILES)
+                })
+            })
+            .flatten();
+        let rel = target.map_or(rel, |dir| format!("{}/*", tilde(&dir)));
+        out.entry((rel, found)).or_default().extend(copies);
     }
     out
+}
+
+/// The main checkout a worktree belongs to (its `.git` file points into
+/// `<main>/.git/worktrees/<name>`), or `repo` itself.
+fn main_checkout(repo: &Path) -> PathBuf {
+    std::fs::read_to_string(repo.join(".git"))
+        .ok()
+        .and_then(|text| {
+            let gitdir = repo.join(text.trim().strip_prefix("gitdir:")?.trim());
+            let worktrees = gitdir.parent()?;
+            (worktrees.file_name()? == "worktrees")
+                .then(|| worktrees.parent()?.parent().map(Path::to_path_buf))
+                .flatten()
+        })
+        .unwrap_or_else(|| repo.to_path_buf())
+}
+
+/// Whether a path names production (`.env.prod`, `deploy/production/`),
+/// by whole words so `product-site` does not count.
+fn production(path: &str) -> bool {
+    path.split(['/', '\\', '.', '-', '_'])
+        .any(|w| w.eq_ignore_ascii_case("prod") || w.eq_ignore_ascii_case("production"))
 }
 
 /// The repository root above `dir` (where `.git` is), to group copies of the
@@ -972,8 +1152,8 @@ fn repo_root(dir: &Path, cache: &mut HashMap<PathBuf, Option<PathBuf>>) -> Optio
 fn project_files(roots: &[PathBuf], exclude: &Exclude, max_depth: usize, out: &mut Out) {
     let mut seen_files = BTreeSet::new();
     let mut repos = HashMap::new();
-    // (path within its repository, secret names) -> every copy.
-    let mut groups: BTreeMap<(String, BTreeSet<String>), Vec<PathBuf>> = BTreeMap::new();
+    // (path in the main checkout, what is exposed) -> every copy, across worktrees.
+    let mut groups: BTreeMap<(String, Found), Vec<PathBuf>> = BTreeMap::new();
     let mut scanned = 0usize;
     for root in roots.iter().filter(|r| r.is_dir() && !exclude.skips(r)) {
         let walker = WalkDir::new(root)
@@ -990,35 +1170,33 @@ fn project_files(roots: &[PathBuf], exclude: &Exclude, max_depth: usize, out: &m
             if !interesting(&name) || !seen_files.insert(entry.path().to_path_buf()) {
                 continue;
             }
-            // Secrets are small files; anything big is not one of these.
-            if entry
-                .metadata()
-                .map(|m| m.len() > 4 * 1024 * 1024)
-                .unwrap_or(true)
-            {
+            if !entry.metadata().is_ok_and(|m| m.len() <= MAX_FILE_BYTES) {
                 continue;
             }
             scanned += 1;
             let Some(src) = read(entry.path()) else {
                 continue;
             };
-            let secrets = file_secrets(&name, &src);
-            if secrets.is_empty() {
+            let Some(found) = file_secrets(&name, &src) else {
                 continue;
-            }
+            };
             let path = entry.path().to_path_buf();
+            // Copies in worktrees of one repository group under its main checkout;
+            // the same file name in an unrelated repository is a separate finding.
             let rel = path
                 .parent()
                 .and_then(|d| repo_root(d, &mut repos))
-                .and_then(|r| path.strip_prefix(r).ok().map(|p| p.display().to_string()))
+                .and_then(|r| {
+                    let inside = path.strip_prefix(&r).ok()?;
+                    Some(tilde(&main_checkout(&r).join(inside)))
+                })
                 .unwrap_or_else(|| tilde(&path));
-            groups.entry((rel, secrets)).or_default().push(path);
+            groups.entry((rel, found)).or_default().push(path);
         }
     }
-    for ((rel, names), copies) in collapse_siblings(groups) {
-        let production = rel.to_ascii_lowercase().contains("prod");
-        let whole_file = names.iter().any(|n| n.contains(' '));
-        let severity = if production || whole_file {
+    for ((rel, found), copies) in collapse_siblings(groups) {
+        let whole_file = matches!(found, Found::WholeFile(_));
+        let severity = if production(&rel) || whole_file {
             Severity::High
         } else {
             Severity::Medium
@@ -1035,10 +1213,9 @@ fn project_files(roots: &[PathBuf], exclude: &Exclude, max_depth: usize, out: &m
         } else {
             rel.clone()
         };
-        let title = if whole_file {
-            format!("{shown}: {}{copies_text}", list(&names, 3))
-        } else {
-            format!(
+        let title = match &found {
+            Found::WholeFile(what) => format!("{shown}: {what}{copies_text}"),
+            Found::Names(names) => format!(
                 "{shown} holds {} {}{copies_text}",
                 names.len(),
                 if names.len() == 1 {
@@ -1046,7 +1223,7 @@ fn project_files(roots: &[PathBuf], exclude: &Exclude, max_depth: usize, out: &m
                 } else {
                     "secrets"
                 }
-            )
+            ),
         };
         let remedy = if collapsed {
             "Keys belong in a secret manager or on the machines that use them, not in a working directory. \
@@ -1058,15 +1235,14 @@ fn project_files(roots: &[PathBuf], exclude: &Exclude, max_depth: usize, out: &m
             "Load secrets at run time from a secret manager instead of keeping them in the file, and rotate any that were ever committed."
         };
         let mut f = Finding::new(
-            format!("file|{rel}|{}", list(&names, 100)),
+            format!("file|{rel}|{}", found.describe(100)),
             severity,
             "secret",
             title,
         )
-        .detail(if whole_file {
-            list(&names, 5)
-        } else {
-            format!("Names: {}", list(&names, 12))
+        .detail(match &found {
+            Found::WholeFile(what) => (*what).to_string(),
+            Found::Names(names) => format!("Names: {}", list(names, 12)),
         })
         .remedy(remedy);
         for p in &copies {
@@ -1117,20 +1293,41 @@ mod tests {
             words("CONDUCTOR_JWT_SecretKey"),
             vec!["conductor", "jwt", "secret", "key"]
         );
+        assert_eq!(words("DBPassword"), vec!["db", "password"]);
+        assert!(is_secret("JWTSecret", "abcdefghijklmnop1234"));
+        assert!(!is_secret("AUTH_URL", "https://auth.example.com/login"));
+        assert_eq!(
+            token_kind("sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"),
+            Some("Anthropic API key")
+        );
+        assert_eq!(
+            startup_secret("curl -H 'X: Bearer ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ'"),
+            Some("GitHub token in a command".to_string())
+        );
+        assert_eq!(
+            startup_secret("set -gx GITHUB_TOKEN ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"),
+            Some("GITHUB_TOKEN".to_string())
+        );
+        assert!(production("~/deploy/prod/.env") && !production("~/code/product-site/.env"));
     }
 
     #[test]
     fn env_and_settings_files_report_names_only() {
         let env = "# comment\nexport AWS_SECRET_ACCESS_KEY=abcd1234efgh5678\nPORT=8080\nDATABASE_URL=postgres://u:pa55word99@h/db\nEMPTY_TOKEN=\n";
-        let names = file_secrets(".env.production", env);
+        let names = |found| match found {
+            Some(Found::Names(n)) => n.into_iter().collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        };
         assert_eq!(
-            names.into_iter().collect::<Vec<_>>(),
+            names(file_secrets(".env.production", env)),
             vec!["AWS_SECRET_ACCESS_KEY", "DATABASE_URL"]
         );
+        // A line that is not an assignment never becomes a "name".
+        let url = "https://deploy:S3cretPass@ci.example.com/hook?token=abc12345\n";
+        assert_eq!(file_secrets(".env", url), None);
         let settings = r#"{"ConnectionStrings":{"Main":"Host=db;Username=app;Password=s3cretpass"},"Logging":{"Level":"Info"},"Jwt":{"Secret":"abcdefghijklmnopqrstuvwxyz"}}"#;
-        let names = file_secrets("appsettings.Production.json", settings);
         assert_eq!(
-            names.into_iter().collect::<Vec<_>>(),
+            names(file_secrets("appsettings.Production.json", settings)),
             vec!["ConnectionStrings.Main", "Jwt.Secret"]
         );
         assert!(!env_file(".env.example") && env_file(".env.local"));
@@ -1186,35 +1383,49 @@ mod tests {
     fn copies_across_worktrees_group_into_one_finding() {
         let base = std::env::temp_dir().join(format!("lenstica-secrets-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
-        for wt in ["main", "wt-a", "wt-b"] {
+        // A main checkout, two worktrees of it, and an unrelated repository.
+        for wt in ["main", "wt-a", "wt-b", "other"] {
             let dir = base.join(wt);
-            std::fs::create_dir_all(dir.join(".git")).unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            match wt {
+                "main" | "other" => std::fs::create_dir_all(dir.join(".git")).unwrap(),
+                _ => {
+                    let gitdir = base.join("main/.git/worktrees").join(wt);
+                    std::fs::create_dir_all(&gitdir).unwrap();
+                    std::fs::write(dir.join(".git"), format!("gitdir: {}\n", gitdir.display()))
+                        .unwrap();
+                }
+            }
             std::fs::write(
                 dir.join(".env.production"),
                 "DB_PASSWORD=correcthorsebattery\n",
             )
             .unwrap();
         }
-        let roots: Vec<PathBuf> = ["main", "wt-a", "wt-b"]
+        let roots: Vec<PathBuf> = ["main", "wt-a", "wt-b", "other"]
             .iter()
             .map(|w| base.join(w))
             .collect();
         let mut out = Out::default();
         project_files(&roots, &Exclude::default(), 4, &mut out);
-        assert_eq!(
-            out.findings.len(),
-            1,
-            "{:?}",
-            out.findings.iter().map(|f| &f.title).collect::<Vec<_>>()
+        let titles: Vec<&str> = out.findings.iter().map(|f| f.title.as_str()).collect();
+        assert_eq!(out.findings.len(), 2, "{titles:?}");
+        let f = out
+            .findings
+            .iter()
+            .find(|f| f.locations.len() == 3)
+            .expect("the worktrees grouped");
+        assert!(
+            f.title
+                .ends_with("main/.env.production holds 1 secret (3 copies)"),
+            "{}",
+            f.title
         );
-        let f = &out.findings[0];
-        assert_eq!(
-            (f.title.as_str(), f.severity, f.locations.len()),
-            (
-                ".env.production holds 1 secret (3 copies)",
-                Severity::High,
-                3
-            )
+        assert_eq!(f.severity, Severity::High);
+        assert!(
+            titles
+                .iter()
+                .any(|t| t.ends_with("other/.env.production holds 1 secret"))
         );
         assert!(!serde_json::to_string(f).unwrap().contains("correcthorse"));
 

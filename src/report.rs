@@ -59,7 +59,7 @@ pub fn detect_unsupported(ctx: &Ctx) -> Vec<Detected> {
         .collect()
 }
 
-/// One-line description of a manager's state, shared by the CLI and the menu.
+/// One-line description of a manager's state, shared by the CLI and the package-managers lens.
 pub fn describe(m: &ManagerStatus) -> String {
     let current = || match (&m.current, &m.current_age) {
         (Some(raw), Some(age)) if raw == age => raw.clone(),

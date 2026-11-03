@@ -109,9 +109,8 @@ pub struct External {
     pub title: Option<String>,
     /// Program and arguments; `{root}` is replaced by each search root when `per_root`.
     pub command: Vec<String>,
-    /// `lenstica`, `gitleaks`, `osv-scanner` or `trufflehog`.
-    #[serde(default = "default_format")]
-    pub format: String,
+    #[serde(default)]
+    pub format: ExternalFormat,
     #[serde(default)]
     pub per_root: bool,
     #[serde(default)]
@@ -122,8 +121,28 @@ pub struct External {
     pub enabled: bool,
 }
 
-fn default_format() -> String {
-    "lenstica".to_string()
+/// How an external tool's output is read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExternalFormat {
+    /// Lenstica's own JSON report (`cooldown` before the rename).
+    #[default]
+    #[serde(alias = "cooldown")]
+    Lenstica,
+    Gitleaks,
+    OsvScanner,
+    Trufflehog,
+}
+
+impl ExternalFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Lenstica => "lenstica",
+            Self::Gitleaks => "gitleaks",
+            Self::OsvScanner => "osv-scanner",
+            Self::Trufflehog => "trufflehog",
+        }
+    }
 }
 
 fn default_external_timeout() -> u64 {
@@ -355,6 +374,7 @@ ignore = []
 # ignore_advisories = []   # e.g. ["GHSA-xxxx-xxxx-xxxx"] once you have assessed it
 # [lenses.secrets]
 # enabled = true
+# max_depth = 6            # folder levels below each root searched for .env and key files
 # [lenses.aikido-malware]
 # refresh_hours = 6        # how often the Aikido malware lists are downloaded again
 # [lenses.safe-chain]
@@ -389,17 +409,29 @@ fn render_template() -> String {
     TEMPLATE.replace("__ROOTS__", &roots)
 }
 
+/// Make sure the settings file exists (from the documented template), without
+/// reading it: opening a broken file to repair it must still work.
+pub fn ensure_exists() -> Result<PathBuf> {
+    let path = path();
+    if !path.exists() {
+        files::write_atomic(&path, &render_template())?;
+    }
+    Ok(path)
+}
+
 impl Config {
     /// Load the settings file, creating it from the documented template on first use.
     pub fn load() -> Result<Self> {
         let path = path();
         let src = match files::read_optional(&path)? {
             Some(src) => match add_missing_settings(&src)? {
-                Some(upgraded) => {
+                // Written only when the result still reads: a new key must never
+                // be what breaks the user's file.
+                Some(upgraded) if toml::from_str::<Config>(&upgraded).is_ok() => {
                     files::write_atomic(&path, &upgraded)?;
                     upgraded
                 }
-                None => src,
+                _ => src,
             },
             None => {
                 let src = render_template();
@@ -423,7 +455,7 @@ impl Config {
         }
         if crate::lenses::parse_severity(&self.monitor.alert_severity).is_none() {
             bail!(
-                "monitor.alert_severity must be low, medium, high or critical, got `{}`",
+                "monitor.alert_severity must be info, low, medium, high or critical, got `{}`",
                 self.monitor.alert_severity
             );
         }
@@ -431,19 +463,45 @@ impl Config {
             && crate::lenses::parse_severity(&self.monitor.notify_severity).is_none()
         {
             bail!(
-                "monitor.notify_severity must be empty, low, medium, high or critical, got `{}`",
+                "monitor.notify_severity must be empty, info, low, medium, high or critical, got `{}`",
                 self.monitor.notify_severity
             );
         }
+        let builtin = crate::lenses::registry(&Config::default());
+        let mut ids = std::collections::BTreeSet::new();
         for e in &self.external {
+            // The id names the lens's state directory, so it must be a plain name.
+            if e.id.is_empty()
+                || !e
+                    .id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            {
+                bail!(
+                    "external lens id `{}` must be letters, digits, `-` and `_` only",
+                    e.id
+                );
+            }
             if e.command.is_empty() {
                 bail!("external lens `{}` has an empty command", e.id);
             }
-            if !matches!(
-                e.format.as_str(),
-                "lenstica" | "cooldown" | "gitleaks" | "osv-scanner" | "trufflehog"
-            ) {
-                bail!("external lens `{}`: unknown format `{}`", e.id, e.format);
+            if e.interval_minutes == Some(0) {
+                bail!(
+                    "external lens `{}`: interval_minutes must be at least 1",
+                    e.id
+                );
+            }
+            if e.timeout_seconds == 0 {
+                bail!(
+                    "external lens `{}`: timeout_seconds must be at least 1",
+                    e.id
+                );
+            }
+            if builtin.iter().any(|r| r.id() == e.id) {
+                bail!("external lens id `{}` is taken by a built-in lens", e.id);
+            }
+            if !ids.insert(e.id.as_str()) {
+                bail!("external lens id `{}` is used twice", e.id);
             }
         }
         if self.audit.interval_minutes == 0 {
@@ -501,6 +559,8 @@ impl Config {
 /// template with their comments, so every option stays documented in the
 /// user's own file. Existing values are never touched. `None` if nothing is missing.
 fn add_missing_settings(src: &str) -> Result<Option<String>> {
+    // Older names for a template table: a file that still uses one has the table.
+    const ALIASES: &[(&str, &str)] = &[("lenses", "checkers")];
     let template: DocumentMut = render_template()
         .parse()
         .expect("the template is valid TOML");
@@ -508,7 +568,13 @@ fn add_missing_settings(src: &str) -> Result<Option<String>> {
         .parse()
         .with_context(|| format!("invalid TOML in {}", path().display()))?;
     let mut changed = false;
-    for (name, item) in template.as_table().iter() {
+    for (name, item) in template.as_table() {
+        if ALIASES
+            .iter()
+            .any(|(new, old)| *new == name && doc.contains_key(old))
+        {
+            continue;
+        }
         let (key, _) = template
             .as_table()
             .get_key_value(name)
@@ -526,7 +592,7 @@ fn add_missing_settings(src: &str) -> Result<Option<String>> {
         let (Some(wanted), Some(have)) = (item.as_table(), existing.as_table_mut()) else {
             continue;
         };
-        for (sub, value) in wanted.iter() {
+        for (sub, value) in wanted {
             if !have.contains_key(sub) {
                 let (sub_key, _) = wanted.get_key_value(sub).expect("iterating its own keys");
                 have.insert_formatted(sub_key, value.clone());
@@ -555,18 +621,11 @@ pub fn update(edit: impl FnOnce(&mut DocumentMut) -> Result<()>) -> Result<()> {
 }
 
 /// The table at `keys`, created (as a normal `[table]`) where missing.
-fn table_at<'a>(doc: &'a mut DocumentMut, keys: &[&str]) -> Result<&'a mut toml_edit::Table> {
-    let mut table = doc.as_table_mut();
-    for key in keys {
-        if !table.contains_key(key) {
-            table.insert(key, toml_edit::Item::Table(toml_edit::Table::new()));
-        }
-        table = table
-            .get_mut(key)
-            .and_then(toml_edit::Item::as_table_mut)
-            .with_context(|| format!("`{key}` in the settings file is not a table"))?;
-    }
-    Ok(table)
+fn table_at<'a>(
+    doc: &'a mut DocumentMut,
+    keys: &[&str],
+) -> Result<&'a mut dyn toml_edit::TableLike> {
+    files::toml_table_at(doc.as_item_mut(), keys)
 }
 
 /// Set one value: `set_value(&["monitor", "notify"], false.into())`.

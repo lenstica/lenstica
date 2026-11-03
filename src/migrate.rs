@@ -25,7 +25,7 @@ pub fn run() {
 
 /// `[checkers.<id>]` became `[lenses.<id>]`, and the external report format
 /// `cooldown` became `lenstica` (both old spellings are still read).
-pub fn rewrite_settings(src: &str) -> String {
+fn rewrite_settings(src: &str) -> String {
     src.lines()
         .map(|l| {
             let t = l.trim_start();
@@ -106,12 +106,12 @@ fn old_login_item() -> Option<(PathBuf, autostart::Kind)> {
 
 #[cfg(target_os = "macos")]
 fn remove_old_login_item(path: &Path) {
-    if let Ok(out) = std::process::Command::new("id").arg("-u").output() {
-        let uid = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        let _ = std::process::Command::new("launchctl")
-            .args(["bootout", &format!("gui/{uid}/dev.cooldown.agent")])
-            .output();
-    }
+    let _ = std::process::Command::new("launchctl")
+        .args([
+            "bootout",
+            &format!("{}/dev.cooldown.agent", autostart::gui_domain()),
+        ])
+        .output();
     let _ = std::fs::remove_file(path);
 }
 
@@ -137,7 +137,7 @@ fn remove_old_login_item(path: &Path) {
 }
 
 #[cfg(windows)]
-const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+use crate::autostart::RUN_KEY;
 
 #[cfg(windows)]
 fn old_login_item() -> Option<(PathBuf, autostart::Kind)> {

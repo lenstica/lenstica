@@ -1,7 +1,8 @@
 //! Find project-level configs that override the user-level cooldown with a
 //! weaker one. A project setting beats the user setting for every package
 //! manager here, so one `minimumReleaseAge: 0` in a repo silently opts that
-//! repo out. These files are reported, never edited.
+//! repo out. (pip has no project-level config, so it is not here.) These
+//! files are reported, never edited.
 
 use std::collections::BTreeSet;
 use std::ffi::OsStr;
@@ -12,7 +13,7 @@ use serde::Serialize;
 use walkdir::WalkDir;
 
 use crate::config::Config;
-use crate::duration::{DAY, MINUTE, humanize, parse_age};
+use crate::duration::{DAY, humanize, parse_age};
 use crate::exec;
 use crate::files;
 use crate::paths::tilde;
@@ -42,7 +43,13 @@ struct Rule {
     manager: &'static str,
     setting: &'static str,
     format: Format,
-    bare_unit: i64,
+}
+
+impl Rule {
+    /// Seconds per unit of a bare number, as the manager itself counts.
+    fn bare_unit(&self) -> i64 {
+        crate::managers::by_id(self.manager).map_or(DAY, |m| m.bare_unit())
+    }
 }
 
 const CARGO_GLOBAL: &[&str] = &["registry", "global-min-publish-age"];
@@ -54,98 +61,72 @@ const RULES: &[Rule] = &[
         manager: "cargo",
         setting: "registry.global-min-publish-age",
         format: Format::Toml(CARGO_GLOBAL),
-        bare_unit: DAY,
     },
     Rule {
         file: ".cargo/config.toml",
         manager: "cargo",
         setting: "registries.crates-io.min-publish-age",
         format: Format::Toml(CARGO_CRATES_IO),
-        bare_unit: DAY,
     },
     Rule {
         file: ".cargo/config",
         manager: "cargo",
         setting: "registry.global-min-publish-age",
         format: Format::Toml(CARGO_GLOBAL),
-        bare_unit: DAY,
     },
     Rule {
         file: ".cargo/config",
         manager: "cargo",
         setting: "registries.crates-io.min-publish-age",
         format: Format::Toml(CARGO_CRATES_IO),
-        bare_unit: DAY,
     },
     Rule {
         file: ".npmrc",
         manager: "npm",
         setting: "min-release-age",
         format: Format::Ini(None),
-        bare_unit: DAY,
     },
     Rule {
         file: ".npmrc",
         manager: "pnpm",
         setting: "minimum-release-age",
         format: Format::Ini(None),
-        bare_unit: MINUTE,
     },
     Rule {
         file: "pnpm-workspace.yaml",
         manager: "pnpm",
         setting: "minimumReleaseAge",
         format: Format::Yaml,
-        bare_unit: MINUTE,
     },
     Rule {
         file: ".yarnrc.yml",
         manager: "yarn",
         setting: "npmMinimalAgeGate",
         format: Format::Yaml,
-        bare_unit: MINUTE,
     },
     Rule {
         file: "bunfig.toml",
         manager: "bun",
-        setting: "minimumReleaseAge",
+        setting: "install.minimumReleaseAge",
         format: Format::Toml(&["install", "minimumReleaseAge"]),
-        bare_unit: 1,
     },
     Rule {
         file: "uv.toml",
         manager: "uv",
         setting: "exclude-newer",
         format: Format::Toml(&["exclude-newer"]),
-        bare_unit: DAY,
     },
     Rule {
         file: "pyproject.toml",
         manager: "uv",
         setting: "tool.uv.exclude-newer",
         format: Format::Toml(&["tool", "uv", "exclude-newer"]),
-        bare_unit: DAY,
     },
     Rule {
         file: "poetry.toml",
         manager: "poetry",
         setting: "solver.min-release-age",
         format: Format::Toml(&["solver", "min-release-age"]),
-        bare_unit: DAY,
-    },
-    Rule {
-        file: "pip.conf",
-        manager: "pip",
-        setting: "uploaded-prior-to",
-        format: Format::Ini(Some("install")),
-        bare_unit: DAY,
-    },
-    Rule {
-        file: "pip.ini",
-        manager: "pip",
-        setting: "uploaded-prior-to",
-        format: Format::Ini(Some("install")),
-        bare_unit: DAY,
     },
 ];
 
@@ -203,12 +184,16 @@ pub fn scan(
     target_secs: i64,
     now: DateTime<Utc>,
 ) -> Vec<Finding> {
-    let mut names: Vec<&str> = RULES.iter().map(rule_file_name).collect();
-    names.dedup();
+    let names: Vec<&str> = RULES
+        .iter()
+        .map(rule_file_name)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut findings = Vec::new();
     for path in find_files(roots, exclude, max_depth, &names) {
-        let matching: Vec<&Rule> = RULES.iter().filter(|r| path.ends_with(r.file)).collect();
-        if matching.is_empty() {
+        let mut matching = RULES.iter().filter(|r| path.ends_with(r.file)).peekable();
+        if matching.peek().is_none() {
             continue;
         }
         let Ok(Some(src)) = files::read_optional(&path) else {
@@ -414,7 +399,7 @@ fn check(
     now: DateTime<Utc>,
 ) -> Option<Finding> {
     let value = extract(rule, src)?;
-    let secs = parse_age(&value, rule.bare_unit, now)?;
+    let secs = parse_age(&value, rule.bare_unit(), now)?;
     (secs < target_secs).then(|| Finding {
         path: tilde(path),
         full_path: path.to_path_buf(),

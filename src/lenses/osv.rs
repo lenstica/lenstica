@@ -1,9 +1,12 @@
 //! Known vulnerabilities and malicious packages, from OSV.dev.
 //!
-//! OSV aggregates GitHub advisories, PyPI's advisory database and the OpenSSF
-//! malicious-packages dataset. Malware is reported separately and at critical
-//! severity: an `MAL-` id, or an advisory tagged CWE-506 (embedded malicious
-//! code), which is how GitHub files some worm releases.
+//! OSV aggregates GitHub advisories, PyPI's advisory database, RustSec and the
+//! OpenSSF malicious-packages dataset. Malware is reported separately and at
+//! critical severity: an `MAL-` id, or an advisory tagged CWE-506 (embedded
+//! malicious code), which is how GitHub files some worm releases. RustSec's
+//! informational notices (unmaintained, unsound) are shown as information.
+//! Severity comes from the advisory's label, else its CVSS v3 vector (v4-only
+//! advisories fall back to medium).
 //!
 //! Each package version is asked about once per `refresh_hours` (default 6):
 //! advisories, malware above all, are published for versions that are already
@@ -14,24 +17,32 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
-use lenstica_lens::{Context, Finding, Lens, Location, Package, Report, Severity};
+use lenstica_lens::{Context, Finding, Lens, Package, Report, Severity, Source};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::cvss;
+use super::shared::{self, MALWARE_REMEDY, normalise_name};
+use crate::audit;
 use crate::config::Config;
 use crate::files;
 use crate::http;
-use crate::version::Version;
+use crate::version::PackageVersion;
 
 const API: &str = "https://api.osv.dev";
 const QUERY_BATCH: usize = 1000;
 const DETAIL_BATCH: usize = 64;
+/// Pages of further advisories fetched for one package, at most.
+const MAX_PAGES: usize = 10;
+/// Bumped when [`parse_advisory`] changes, so cached advisories are re-read.
+const CACHE_VERSION: u32 = 2;
 
 pub struct Vulnerabilities;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Cache {
+    #[serde(default)]
+    version: u32,
     /// `npm:lodash@4.17.15` -> (checked at, [(advisory id, modified)]).
     packages: BTreeMap<String, (i64, Vec<(String, String)>)>,
     advisories: BTreeMap<String, Advisory>,
@@ -56,11 +67,12 @@ fn package_key(p: &Package) -> String {
 
 impl Cache {
     fn load(dir: &Path) -> Self {
-        files::read_optional(&dir.join("osv.json"))
-            .ok()
-            .flatten()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
+        let mut cache: Self = files::read_json(&dir.join("osv.json")).unwrap_or_default();
+        if cache.version != CACHE_VERSION {
+            cache.advisories.clear();
+            cache.version = CACHE_VERSION;
+        }
+        cache
     }
 
     fn save(&self, dir: &Path) -> Result<()> {
@@ -73,17 +85,22 @@ fn str_at<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
+/// The strings in a JSON array; empty for anything else.
+fn str_array(v: Option<&Value>) -> impl Iterator<Item = String> + '_ {
+    v.and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(String::from)
+}
+
+fn array<'a>(v: &'a Value, key: &str) -> impl Iterator<Item = &'a Value> {
+    v.get(key).and_then(Value::as_array).into_iter().flatten()
+}
+
 fn parse_advisory(doc: &Value) -> Option<Advisory> {
     let id = doc.get("id")?.as_str()?.to_string();
-    let aliases: Vec<String> = doc
-        .get("aliases")
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
+    let aliases: Vec<String> = str_array(doc.get("aliases")).collect();
     let db = doc.get("database_specific");
     let cwe_506 = db
         .and_then(|d| d.get("cwe_ids"))
@@ -95,57 +112,39 @@ fn parse_advisory(doc: &Value) -> Option<Advisory> {
         .and_then(|d| d.get("severity"))
         .and_then(Value::as_str)
         .and_then(super::parse_severity);
-    let scored = doc
-        .get("severity")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
+    let scored = array(doc, "severity")
         .filter_map(|s| cvss::base_score(str_at(s, "score")))
         .fold(None, |best: Option<f64>, s| {
             Some(best.map_or(s, |b| b.max(s)))
         })
         .map(cvss::severity);
+    // RustSec notices (unmaintained, unsound) are not vulnerabilities.
+    let informational = array(doc, "affected").any(|a| {
+        a.pointer("/database_specific/informational")
+            .is_some_and(|v| !v.is_null())
+    });
     let severity = if malicious {
         Severity::Critical
+    } else if informational {
+        Severity::Info
     } else {
         labelled.or(scored).unwrap_or(Severity::Medium)
     };
     let mut fixed = Vec::new();
-    for affected in doc
-        .get("affected")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
+    for affected in array(doc, "affected") {
         let pkg = affected.get("package");
-        let eco = pkg
-            .map(|p| str_at(p, "ecosystem"))
-            .unwrap_or("")
-            .to_string();
-        let name = pkg.map(|p| str_at(p, "name")).unwrap_or("").to_lowercase();
-        for range in affected
-            .get("ranges")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            for event in range
-                .get("events")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(v) = event.get("fixed").and_then(Value::as_str) {
-                    fixed.push((eco.clone(), name.clone(), v.to_string()));
-                }
+        let eco = pkg.map_or("", |p| str_at(p, "ecosystem")).to_string();
+        let name = pkg.map_or("", |p| str_at(p, "name")).to_lowercase();
+        for event in array(affected, "ranges").flat_map(|r| array(r, "events")) {
+            if let Some(v) = event.get("fixed").and_then(Value::as_str) {
+                fixed.push((eco.clone(), name.clone(), v.to_string()));
             }
         }
     }
-    let refs: Vec<&Value> = doc
+    let refs = doc
         .get("references")
         .and_then(Value::as_array)
-        .map(|r| r.iter().collect())
-        .unwrap_or_default();
+        .map_or(&[][..], Vec::as_slice);
     let url = refs
         .iter()
         .find(|r| str_at(r, "type") == "ADVISORY")
@@ -175,7 +174,54 @@ fn parse_advisory(doc: &Value) -> Option<Advisory> {
     })
 }
 
-/// Ask OSV about every package not checked within `refresh_secs`.
+fn query_of(p: &Package, page_token: Option<&str>) -> Value {
+    let mut q = serde_json::json!({
+        "package": { "name": p.name, "ecosystem": p.ecosystem.osv_name() },
+        "version": p.version,
+    });
+    if let Some(token) = page_token {
+        q["page_token"] = token.into();
+    }
+    q
+}
+
+/// One `querybatch` call: a result per query, in order.
+fn query_batch(queries: Vec<Value>, cx: &Context) -> Result<Vec<Value>> {
+    let body = serde_json::json!({ "queries": queries }).to_string();
+    let response = http::post_json(
+        &format!("{API}/v1/querybatch"),
+        &body,
+        &cx.state_dir,
+        cx.search_path,
+    )?;
+    let mut parsed: Value =
+        serde_json::from_str(&response).context("unexpected reply from OSV.dev")?;
+    match parsed.get_mut("results").map(Value::take) {
+        Some(Value::Array(results)) => Ok(results),
+        _ => anyhow::bail!("OSV.dev reply has no results"),
+    }
+}
+
+/// The (id, modified) pairs in one query result, and the token for its next page.
+fn vulns_of(result: &Value) -> (Vec<(String, String)>, Option<String>) {
+    let vulns = array(result, "vulns")
+        .map(|x| {
+            (
+                str_at(x, "id").to_string(),
+                str_at(x, "modified").to_string(),
+            )
+        })
+        .collect();
+    let next = result
+        .get("next_page_token")
+        .and_then(Value::as_str)
+        .filter(|t| !t.is_empty())
+        .map(String::from);
+    (vulns, next)
+}
+
+/// Ask OSV about every package not checked within `refresh_secs`, following
+/// result pages for packages with many advisories.
 fn refresh_packages(
     cache: &mut Cache,
     packages: &[&Package],
@@ -183,8 +229,9 @@ fn refresh_packages(
     now: i64,
     cx: &Context,
 ) -> Result<()> {
-    let stale: Vec<&&Package> = packages
+    let stale: Vec<&Package> = packages
         .iter()
+        .copied()
         .filter(|p| {
             cache
                 .packages
@@ -193,43 +240,32 @@ fn refresh_packages(
         })
         .collect();
     for chunk in stale.chunks(QUERY_BATCH) {
-        let queries: Vec<Value> = chunk
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "package": { "name": p.name, "ecosystem": p.ecosystem.osv_name() },
-                    "version": p.version,
-                })
-            })
-            .collect();
-        let body = serde_json::json!({ "queries": queries }).to_string();
-        let response = http::post_json(
-            &format!("{API}/v1/querybatch"),
-            &body,
-            &cx.state_dir,
-            cx.search_path,
-        )?;
-        let parsed: Value =
-            serde_json::from_str(&response).context("unexpected reply from OSV.dev")?;
-        let results = parsed
-            .get("results")
-            .and_then(Value::as_array)
-            .context("OSV.dev reply has no results")?;
-        for (p, result) in chunk.iter().zip(results) {
-            let vulns = result
-                .get("vulns")
-                .and_then(Value::as_array)
-                .map(|v| {
-                    v.iter()
-                        .map(|x| {
-                            (
-                                str_at(x, "id").to_string(),
-                                str_at(x, "modified").to_string(),
-                            )
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+        let results = query_batch(chunk.iter().map(|p| query_of(p, None)).collect(), cx)?;
+        let mut found: Vec<Vec<(String, String)>> = Vec::with_capacity(chunk.len());
+        let mut pages: Vec<(usize, String)> = Vec::new();
+        for (i, result) in results.iter().enumerate().take(chunk.len()) {
+            let (vulns, next) = vulns_of(result);
+            found.push(vulns);
+            pages.extend(next.map(|t| (i, t)));
+        }
+        for _ in 0..MAX_PAGES {
+            if pages.is_empty() {
+                break;
+            }
+            let queries = pages
+                .iter()
+                .map(|(i, token)| query_of(chunk[*i], Some(token)))
+                .collect();
+            let results = query_batch(queries, cx)?;
+            let mut next_pages = Vec::new();
+            for ((i, _), result) in pages.iter().zip(&results) {
+                let (vulns, next) = vulns_of(result);
+                found[*i].extend(vulns);
+                next_pages.extend(next.map(|t| (*i, t)));
+            }
+            pages = next_pages;
+        }
+        for (p, vulns) in chunk.iter().zip(found) {
             cache.packages.insert(package_key(p), (now, vulns));
         }
         cache.save(&cx.state_dir)?;
@@ -262,10 +298,7 @@ fn refresh_advisories(
         http::get_batch(&urls, &scratch.0, cx.search_path)?;
         for i in 0..chunk.len() {
             let file = scratch.0.join(i.to_string());
-            if let Some(adv) = files::read_optional(&file)
-                .ok()
-                .flatten()
-                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            if let Some(adv) = files::read_json::<Value>(&file)
                 .as_ref()
                 .and_then(parse_advisory)
             {
@@ -287,7 +320,7 @@ fn dedupe(advisories: Vec<&Advisory>) -> Vec<&Advisory> {
         _ => 2,
     };
     let mut sorted = advisories;
-    sorted.sort_by_key(|a| (rank(a), a.id.clone()));
+    sorted.sort_by(|a, b| (rank(a), &a.id).cmp(&(rank(b), &b.id)));
     let mut covered: BTreeSet<&str> = BTreeSet::new();
     let mut kept = Vec::new();
     for a in sorted {
@@ -302,61 +335,82 @@ fn dedupe(advisories: Vec<&Advisory>) -> Vec<&Advisory> {
     kept
 }
 
-/// The lowest fixed version above `current` for this package, if any.
-fn fixed_in(advisories: &[&Advisory], pkg: &Package) -> Option<String> {
-    let name = pkg.name.to_lowercase();
-    let current = Version::parse(&pkg.version)?;
-    advisories
-        .iter()
-        .flat_map(|a| a.fixed.iter())
-        .filter(|(eco, n, _)| eco == pkg.ecosystem.osv_name() && *n == name)
-        .filter_map(|(_, _, v)| {
-            Version::parse(v)
-                .filter(|parsed| *parsed > current)
-                .map(|parsed| (parsed, v.clone()))
-        })
-        .min()
-        .map(|(_, v)| v)
-}
-
-fn ignored_package(cfg: &Config, p: &Package) -> bool {
-    cfg.audit.ignore.iter().any(
-        |r| match r.rsplit_once('@').filter(|(n, _)| !n.is_empty()) {
-            Some((name, version)) => name == p.name && version == p.version,
-            None => r == &p.name,
-        },
-    )
+/// The version that fixes every advisory listing a fix: per advisory the
+/// lowest fixed version above `current`, then the highest of those. Also
+/// how many advisories list no fix above `current`.
+fn fixed_in(advisories: &[&Advisory], pkg: &Package) -> (Option<String>, usize) {
+    let Some(current) = PackageVersion::parse(&pkg.version) else {
+        return (None, advisories.len());
+    };
+    let name = normalise_name(pkg.ecosystem, &pkg.name).to_lowercase();
+    let same_package = |eco: &str, n: &str| {
+        eco == pkg.ecosystem.osv_name() && normalise_name(pkg.ecosystem, n).to_lowercase() == name
+    };
+    let mut unfixed = 0;
+    let mut needed: Option<(PackageVersion, &String)> = None;
+    for a in advisories {
+        let lowest = a
+            .fixed
+            .iter()
+            .filter(|(eco, n, _)| same_package(eco, n))
+            .filter_map(|(_, _, v)| {
+                PackageVersion::parse(v)
+                    .filter(|p| *p > current)
+                    .map(|p| (p, v))
+            })
+            .min();
+        match lowest {
+            Some(fix) => {
+                if needed.as_ref().is_none_or(|n| fix.0 > n.0) {
+                    needed = Some(fix);
+                }
+            }
+            None => unfixed += 1,
+        }
+    }
+    (needed.map(|(_, v)| v.clone()), unfixed)
 }
 
 fn finding(
     pkg: &Package,
     advisories: &[&Advisory],
-    sources: &[&lenstica_lens::Source],
-    fix: Option<String>,
+    sources: &[&Source],
+    (fix, unfixed): (Option<String>, usize),
 ) -> Finding {
     let worst = advisories
         .iter()
         .map(|a| a.severity)
         .max()
         .unwrap_or(Severity::Medium);
-    let malicious: Vec<&&Advisory> = advisories.iter().filter(|a| a.malicious).collect();
+    let malicious = advisories.iter().any(|a| a.malicious);
     let ids: Vec<&str> = advisories.iter().map(|a| a.id.as_str()).collect();
-    let mut f = if !malicious.is_empty() {
+    let mut f = if malicious {
         Finding::new(
-            format!("malware|{}|{}|{}", pkg.ecosystem.label(), pkg.name, pkg.version),
+            format!(
+                "malware|{}|{}|{}",
+                pkg.ecosystem.label(),
+                pkg.name,
+                pkg.version
+            ),
             Severity::Critical,
             "malware",
-            format!("Malicious package: {} {} ({})", pkg.name, pkg.version, pkg.ecosystem.label()),
+            format!(
+                "Malicious package: {} {} ({})",
+                pkg.name,
+                pkg.version,
+                pkg.ecosystem.label()
+            ),
         )
-        .remedy(
-            "Remove it, then treat this machine as compromised: from another machine, revoke and rotate every credential \
-             this one can reach (npm and GitHub tokens, cloud sign-ins, SSH keys, .env secrets), and check the advisory \
-             for anything it installs to persist.",
-        )
+        .remedy(MALWARE_REMEDY)
     } else {
-        let remedy = match &fix {
-            Some(v) => format!("Upgrade {} to {v} or later.", pkg.name),
-            None => "No fixed version is listed. Check whether the vulnerable code path is used, or replace the package.".to_string(),
+        let remedy = match (&fix, unfixed) {
+            (Some(v), 0) => format!("Upgrade {} to {v} or later.", pkg.name),
+            (Some(v), n) => format!(
+                "Upgrade {} to {v} or later. {n} of the advisories list no fixed version yet: check whether \
+                 their code path is used.",
+                pkg.name
+            ),
+            (None, _) => "No fixed version is listed. Check whether the vulnerable code path is used, or replace the package.".to_string(),
         };
         Finding::new(
             format!(
@@ -392,11 +446,7 @@ fn finding(
         f = f.link(a.url.clone());
     }
     for s in sources {
-        f = f.at(Location {
-            label: s.label.clone(),
-            path: s.path.clone(),
-            line: None,
-        });
+        f = f.at(s.location());
     }
     f
 }
@@ -409,7 +459,7 @@ impl Lens for Vulnerabilities {
         "Vulnerabilities and malware"
     }
     fn description(&self) -> &str {
-        "Locked and installed packages with known vulnerabilities or known malicious releases, from OSV.dev (GitHub, PyPI and OpenSSF malicious-packages advisories)."
+        "Locked and installed packages with known vulnerabilities or known malicious releases, from OSV.dev (GitHub, PyPI, RustSec and OpenSSF malicious-packages advisories)."
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
@@ -419,30 +469,18 @@ impl Lens for Vulnerabilities {
         let packages: Vec<&Package> = by_package
             .keys()
             .copied()
-            .filter(|p| !ignored_package(&cfg, p))
+            .filter(|p| !audit::ignore_matches(&cfg.audit.ignore, &p.name, &p.version))
             .collect();
-        let refresh_hours = cx
-            .settings
-            .get("refresh_hours")
-            .and_then(Value::as_i64)
-            .unwrap_or(6)
-            .max(1);
-        let ignore_advisories: BTreeSet<String> = cx
-            .settings
-            .get("ignore_advisories")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|x| x.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let refresh_hours = shared::refresh_hours(cx.settings);
+        let ignore_advisories: BTreeSet<String> =
+            str_array(cx.settings.get("ignore_advisories")).collect();
 
         let mut cache = Cache::load(&cx.state_dir);
         let now = chrono::Utc::now().timestamp();
         let mut problems = Vec::new();
         if !cx.offline {
-            if let Err(e) = refresh_packages(&mut cache, &packages, refresh_hours * 3600, now, cx) {
+            let refresh_secs = i64::try_from(refresh_hours * 3600).unwrap_or(i64::MAX);
+            if let Err(e) = refresh_packages(&mut cache, &packages, refresh_secs, now, cx) {
                 problems.push(format!("OSV.dev: {e:#}"));
             }
             let wanted: BTreeMap<String, String> = packages
@@ -548,6 +586,31 @@ mod tests {
             name: "lodash".into(),
             version: "4.17.15".into(),
         };
-        assert_eq!(fixed_in(&[&g], &pkg).as_deref(), Some("4.17.21"));
+        assert_eq!(fixed_in(&[&g], &pkg), (Some("4.17.21".to_string()), 0));
+        // Two advisories fixed in different releases: only the later fixes both.
+        let mut older = g.clone();
+        older.fixed = vec![("npm".into(), "lodash".into(), "4.17.16".into())];
+        assert_eq!(
+            fixed_in(&[&older, &g], &pkg),
+            (Some("4.17.21".to_string()), 0)
+        );
+        let mut unfixed = g.clone();
+        unfixed.fixed.clear();
+        assert_eq!(
+            fixed_in(&[&unfixed, &g], &pkg),
+            (Some("4.17.21".to_string()), 1)
+        );
+        // PyPI names match however they are spelled.
+        let mut py = g.clone();
+        py.fixed = vec![("PyPI".into(), "typing-extensions".into(), "4.5.0".into())];
+        let pkg = Package {
+            ecosystem: Ecosystem::Pypi,
+            name: "typing_extensions".into(),
+            version: "4.4.0".into(),
+        };
+        assert_eq!(fixed_in(&[&py], &pkg).0.as_deref(), Some("4.5.0"));
+        let notice: Value = serde_json::from_str(r#"{"id":"RUSTSEC-1","modified":"m","summary":"unmaintained",
+            "affected":[{"package":{"ecosystem":"crates.io","name":"atty"},"database_specific":{"informational":"unmaintained"}}]}"#).unwrap();
+        assert_eq!(parse_advisory(&notice).unwrap().severity, Severity::Info);
     }
 }

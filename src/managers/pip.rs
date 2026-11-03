@@ -1,10 +1,9 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
-use super::{Ctx, Manager, Tool, unset_marker};
+use super::{Ctx, Manager, Tool, cli_get, cli_set};
 use crate::duration::DAY;
-use crate::exec;
 use crate::paths;
 use crate::version::Version;
 
@@ -37,35 +36,38 @@ impl Manager for Pip {
     fn target(&self, days: u32) -> String {
         format!("P{days}D")
     }
+    /// `P<n>D` or an absolute date and time, nothing else.
+    fn accepts(&self, raw: &str) -> bool {
+        let v = crate::duration::unquote(raw);
+        v.strip_prefix('P')
+            .and_then(|d| d.strip_suffix('D'))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            || crate::duration::is_timestamp(v)
+    }
+    /// pip's user config: `%APPDATA%\pip\pip.ini`; on macOS
+    /// `~/Library/Application Support/pip/pip.conf` when that folder exists,
+    /// else `~/.config/pip/pip.conf` (pip ignores `XDG_CONFIG_HOME` there).
     fn location(&self, _tool: &Tool) -> PathBuf {
         if cfg!(windows) {
             paths::appdata().join("pip").join("pip.ini")
+        } else if cfg!(target_os = "macos") {
+            let library = paths::home()
+                .join("Library")
+                .join("Application Support")
+                .join("pip");
+            if library.is_dir() {
+                library.join("pip.conf")
+            } else {
+                paths::home().join(".config").join("pip").join("pip.conf")
+            }
         } else {
             paths::config_root().join("pip").join("pip.conf")
         }
     }
     fn read(&self, tool: &Tool, ctx: &Ctx) -> Result<Option<String>> {
-        let out = exec::run(&tool.bin, &["config", "get", KEY], &ctx.search)?;
-        if !out.success {
-            if out.stderr.contains("No such key") {
-                return Ok(None);
-            }
-            bail!("pip config get failed: {}", out.error_text());
-        }
-        Ok(out
-            .last_line()
-            .filter(|v| !unset_marker(v))
-            .map(str::to_string))
+        cli_get(tool, ctx, &["config", "get", KEY], Some("No such key"))
     }
     fn write(&self, tool: &Tool, value: &str, ctx: &Ctx) -> Result<()> {
-        let out = exec::run(
-            &tool.bin,
-            &["config", "--user", "set", KEY, value],
-            &ctx.search,
-        )?;
-        if !out.success {
-            bail!("pip config set failed: {}", out.error_text());
-        }
-        Ok(())
+        cli_set(tool, ctx, &["config", "--user", "set", KEY, value])
     }
 }

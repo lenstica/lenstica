@@ -9,8 +9,8 @@ fn main() {
         if let Ok(target) = std::env::var("TARGET") {
             println!("cargo:rustc-env=TAURI_ENV_TARGET_TRIPLE={target}");
         }
-        return;
+    } else {
+        #[cfg(feature = "tray")]
+        tauri_build::build();
     }
-    #[cfg(feature = "tray")]
-    tauri_build::build();
 }

@@ -3,7 +3,57 @@
 //! hold secret values (lenses report names and paths only), so neither
 //! does the prompt; it also tells the agent not to print any.
 
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+
 use lenstica_lens::Finding;
+
+use crate::config::Config;
+use crate::lenses::{self, store::RunResult};
+
+/// The findings a prompt covers, with their lens titles, most severe first.
+/// Each item is a lens (`None`: every lens) and one finding's key (`None`:
+/// that lens's alerts); no items means every alert. Lenses that are turned
+/// off are left out, as in every other view.
+pub fn collect<'a>(
+    cfg: &Config,
+    results: &'a BTreeMap<String, RunResult>,
+    items: &[(Option<&str>, Option<&str>)],
+) -> Vec<(&'a Finding, &'a str)> {
+    let wanted = |r: &RunResult, f: &Finding| {
+        if items.is_empty() {
+            return lenses::is_alert(cfg, f);
+        }
+        items.iter().any(|(lens, key)| {
+            lens.is_none_or(|l| l == r.id)
+                && match key {
+                    Some(k) => f.key == *k,
+                    None => lenses::is_alert(cfg, f),
+                }
+        })
+    };
+    let mut list: Vec<(&Finding, &str)> = lenses::live_results(cfg, results)
+        .flat_map(|r| {
+            r.findings
+                .iter()
+                .filter(move |f| wanted(r, f))
+                .map(move |f| (f, r.title.as_str()))
+        })
+        .collect();
+    list.sort_by(|a, b| lenses::by_severity(a.0, b.0));
+    list
+}
+
+/// `text` as one shell word: `'it'\''s'`.
+pub fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+/// The command that fixes a finding, for those Lenstica can fix.
+pub fn fix_command(f: &Finding) -> Option<String> {
+    f.fixable
+        .then(|| format!("lenstica fix {} {}", f.lens, shell_quote(&f.key)))
+}
 
 /// One finding.
 pub fn for_finding(f: &Finding, lens_title: &str) -> String {
@@ -17,7 +67,7 @@ pub fn for_finding(f: &Finding, lens_title: &str) -> String {
     if f.category == "agent" {
         out.push_str(UNTRUSTED);
     }
-    out.push_str(&closing(&f.lens, f.fixable.then_some(f.key.as_str())));
+    out.push_str(&closing(f));
     out
 }
 
@@ -36,28 +86,30 @@ pub fn for_findings(findings: &[(&Finding, &str)]) -> String {
                 many.len()
             );
             for (i, (f, title)) in many.iter().enumerate() {
-                out.push_str(&format!(
+                let _ = write!(
+                    out,
                     "\n{}. [{}, {}] {}\n",
                     i + 1,
                     f.severity.label(),
                     title,
                     f.title
-                ));
+                );
                 push_body(&mut out, f);
+                if let Some(fix) = fix_command(f) {
+                    let _ = writeln!(out, "Lenstica can fix this itself: `{fix}`.");
+                }
             }
             if many.iter().any(|(f, _)| f.category == "agent") {
                 out.push_str(UNTRUSTED);
             }
-            let lenses: Vec<&str> = {
-                let mut ids: Vec<&str> = many.iter().map(|(f, _)| f.lens.as_str()).collect();
-                ids.sort_unstable();
-                ids.dedup();
-                ids
-            };
-            out.push_str(&format!(
-                "\nDo not print, copy or commit any secret values. Ask before anything destructive or outside this machine (rotating credentials, deleting files, pushing). When done, run `lenstica check {}` to confirm they are gone; `lenstica findings --json` lists what is left.\n",
-                lenses.join(" ")
-            ));
+            let mut ids: Vec<&str> = many.iter().map(|(f, _)| f.lens.as_str()).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            let _ = writeln!(
+                out,
+                "\nDo not print, copy or commit any secret values. Ask before anything destructive or outside this machine (rotating credentials, deleting files, pushing). When done, run `lenstica check {}` to confirm they are gone; `lenstica findings --json` lists what is left.",
+                ids.join(" ")
+            );
             out
         }
     }
@@ -65,58 +117,50 @@ pub fn for_findings(findings: &[(&Finding, &str)]) -> String {
 
 fn push_body(out: &mut String, f: &Finding) {
     if !f.detail.trim().is_empty() {
-        out.push_str(&format!("\n{}\n", indent_block(f.detail.trim(), 6)));
+        let _ = write!(out, "\n{}\n", first_lines(f.detail.trim(), 6));
     }
     if !f.locations.is_empty() {
         out.push_str("\nWhere:\n");
         for l in f.locations.iter().take(10) {
             let line = l.line.map(|n| format!(":{n}")).unwrap_or_default();
-            match &l.path {
+            let _ = match &l.path {
                 // A label that is just the path with `~` adds nothing.
                 Some(p) if crate::paths::expand(&l.label) != *p => {
-                    out.push_str(&format!("- {}{line} ({})\n", l.label, p.display()))
+                    writeln!(out, "- {}{line} ({})", l.label, p.display())
                 }
-                _ => out.push_str(&format!("- {}{line}\n", l.label)),
-            }
+                _ => writeln!(out, "- {}{line}", l.label),
+            };
         }
         if f.locations.len() > 10 {
-            out.push_str(&format!("- and {} more\n", f.locations.len() - 10));
+            let _ = writeln!(out, "- and {} more", f.locations.len() - 10);
         }
     }
     if !f.remedy.trim().is_empty() {
-        out.push_str(&format!("\nSuggested fix: {}\n", f.remedy.trim()));
+        let _ = write!(out, "\nSuggested fix: {}\n", f.remedy.trim());
     }
     if !f.links.is_empty() {
-        out.push_str(&format!("References: {}\n", f.links.join(" ")));
+        let _ = writeln!(out, "References: {}", f.links.join(" "));
     }
 }
 
 /// Keep long details short: the first `max` lines.
-fn indent_block(text: &str, max: usize) -> String {
-    let lines: Vec<&str> = text.lines().collect();
-    let mut out = lines
-        .iter()
-        .take(max)
-        .copied()
-        .collect::<Vec<_>>()
-        .join("\n");
-    if lines.len() > max {
-        out.push_str(&format!("\n(+{} more lines)", lines.len() - max));
+fn first_lines(text: &str, max: usize) -> String {
+    let mut lines = text.lines();
+    let mut out = lines.by_ref().take(max).collect::<Vec<_>>().join("\n");
+    let rest = lines.count();
+    if rest > 0 {
+        let _ = write!(out, "\n(+{rest} more lines)");
     }
     out
 }
 
-fn closing(lens: &str, key: Option<&str>) -> String {
-    let fix = key
-        .map(|k| {
-            format!(
-                " Lenstica can fix this itself: `lenstica fix {lens} '{}'`.",
-                k.replace('\'', "'\\''")
-            )
-        })
+fn closing(f: &Finding) -> String {
+    let fix = fix_command(f)
+        .map(|c| format!(" Lenstica can fix this itself: `{c}`."))
         .unwrap_or_default();
     format!(
-        "\nPlease fix this. Do not print, copy or commit any secret values. Ask before anything destructive or outside this machine (rotating credentials, deleting files, pushing).{fix} When done, run `lenstica check {lens}` to confirm the finding is gone.\n"
+        "\nPlease fix this. Do not print, copy or commit any secret values. Ask before anything destructive or outside this machine (rotating credentials, deleting files, pushing).{fix} When done, run `lenstica check {}` to confirm the finding is gone.\n",
+        f.lens
     )
 }
 

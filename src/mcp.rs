@@ -32,6 +32,9 @@ pub fn serve() -> Result<()> {
             continue;
         }
         let reply = match serde_json::from_str::<Value>(&line) {
+            Ok(Value::Array(batch)) if batch.is_empty() => {
+                Some(error(Value::Null, -32600, "invalid request: empty batch"))
+            }
             Ok(Value::Array(batch)) => {
                 let replies: Vec<Value> = batch.iter().filter_map(handle).collect();
                 (!replies.is_empty()).then_some(Value::Array(replies))
@@ -51,10 +54,20 @@ fn error(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-/// The reply to one message; `None` for notifications.
+/// The reply to one message; `None` for notifications and for replies to
+/// requests (this server sends none, so they are ignored).
 fn handle(msg: &Value) -> Option<Value> {
+    if !msg.is_object() {
+        return Some(error(Value::Null, -32600, "invalid request: not an object"));
+    }
+    let Some(method) = msg.get("method").and_then(Value::as_str) else {
+        if msg.get("result").is_some() || msg.get("error").is_some() {
+            return None;
+        }
+        let id = msg.get("id").cloned().unwrap_or(Value::Null);
+        return Some(error(id, -32600, "invalid request: no method"));
+    };
     let id = msg.get("id").cloned()?;
-    let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
     let result = match method {
         "initialize" => {
@@ -73,6 +86,12 @@ fn handle(msg: &Value) -> Option<Value> {
         "tools/list" => json!({ "tools": tools() }),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+            if !tools()
+                .as_array()
+                .is_some_and(|t| t.iter().any(|tool| tool["name"] == name))
+            {
+                return Some(error(id, -32602, &format!("unknown tool: {name}")));
+            }
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             match call(name, &args) {
                 Ok(text) => json!({ "content": [{ "type": "text", "text": text }] }),
@@ -105,7 +124,7 @@ fn tools() -> Value {
                 "properties": {
                     "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"], "description": "Lowest severity to include (default low)" },
                     "lens": { "type": "string", "description": "Only this lens id, e.g. secrets, vulnerabilities, package-age" },
-                    "category": { "type": "string", "enum": ["malware", "vulnerability", "secret", "cooldown", "deprecated", "settings"] },
+                    "category": { "type": "string", "enum": lenses::CATEGORIES },
                     "query": { "type": "string", "description": "Only findings whose title, detail or locations contain this text" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Default 50" }
                 }
@@ -200,26 +219,33 @@ fn call(name: &str, args: &Value) -> Result<String> {
     let results = lenses::store::load();
     match name {
         "lenstica_status" => {
+            let mut alerts = 0;
             let lenses: Vec<Value> = lenses::registry(&cfg)
                 .iter()
                 .map(|r| {
                     let res = results.get(r.id());
+                    let enabled = lenses::enabled(&cfg, r);
+                    let need_attention = res.map_or(0, |x| {
+                        x.findings
+                            .iter()
+                            .filter(|f| lenses::is_alert(&cfg, f))
+                            .count()
+                    });
+                    if enabled {
+                        alerts += need_attention;
+                    }
                     json!({
                         "id": r.id(),
                         "title": r.lens.title(),
-                        "enabled": lenses::enabled(&cfg, r),
+                        "enabled": enabled,
                         "ran_at": res.map(|x| x.ran_at),
                         "summary": res.map(|x| x.summary.clone()),
                         "error": res.and_then(|x| x.error.clone()),
                         "findings": res.map_or(0, |x| x.findings.len()),
-                        "need_attention": res.map_or(0, |x| x.findings.iter().filter(|f| lenses::is_alert(&cfg, f)).count()),
+                        "need_attention": need_attention,
                     })
                 })
                 .collect();
-            let alerts: usize = lenses
-                .iter()
-                .filter_map(|c| c["need_attention"].as_u64())
-                .sum::<u64>() as usize;
             Ok(pretty(&json!({
                 "min_days": cfg.min_days,
                 "alert_severity": lenses::threshold(&cfg).label(),
@@ -242,10 +268,8 @@ fn call(name: &str, args: &Value) -> Result<String> {
                 .and_then(Value::as_u64)
                 .unwrap_or(50)
                 .clamp(1, 500) as usize;
-            let mut list: Vec<&Finding> = results
-                .values()
+            let mut list: Vec<&Finding> = lenses::live_results(&cfg, &results)
                 .filter(|r| lens.is_none_or(|c| r.id == c))
-                .filter(|r| lenses::find(&cfg, &r.id).is_ok_and(|reg| lenses::enabled(&cfg, &reg)))
                 .flat_map(|r| &r.findings)
                 .filter(|f| f.severity >= min)
                 .filter(|f| category.is_none_or(|c| f.category == c))
@@ -265,11 +289,7 @@ fn call(name: &str, args: &Value) -> Result<String> {
                     })
                 })
                 .collect();
-            list.sort_by(|a, b| {
-                b.severity
-                    .cmp(&a.severity)
-                    .then_with(|| a.title.cmp(&b.title))
-            });
+            list.sort_by(|a, b| lenses::by_severity(a, b));
             let total = list.len();
             let shown: Vec<Value> = list.into_iter().take(limit).map(brief).collect();
             Ok(pretty(
@@ -287,15 +307,7 @@ fn call(name: &str, args: &Value) -> Result<String> {
             Ok(pretty(&value))
         }
         "lenstica_prompt" => {
-            let lens = str_arg(args, "lens");
-            let mut list: Vec<(&Finding, &str)> = results
-                .values()
-                .filter(|r| lens.is_none_or(|c| r.id == c))
-                .filter(|r| lenses::find(&cfg, &r.id).is_ok_and(|reg| lenses::enabled(&cfg, &reg)))
-                .flat_map(|r| r.findings.iter().map(move |f| (f, r.title.as_str())))
-                .filter(|(f, _)| lenses::is_alert(&cfg, f))
-                .collect();
-            list.sort_by(|a, b| b.0.severity.cmp(&a.0.severity));
+            let list = prompt::collect(&cfg, &results, &[(str_arg(args, "lens"), None)]);
             Ok(prompt::for_findings(&list))
         }
         "lenstica_run" => {
@@ -335,7 +347,7 @@ fn call(name: &str, args: &Value) -> Result<String> {
                 str_arg(args, "lens").context("`lens` is required")?,
                 str_arg(args, "key").context("`key` is required")?,
             );
-            lenses::fix(&cfg, lens, key)
+            lenses::fix(&cfg, lens, key).map(|(done, _)| done)
         }
         other => bail!("unknown tool `{other}`"),
     }
@@ -371,5 +383,12 @@ mod tests {
         );
         let unknown = handle(&json!({"jsonrpc":"2.0","id":2,"method":"nope"})).unwrap();
         assert_eq!(unknown["error"]["code"], -32601);
+        let tool =
+            handle(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"nope"}}));
+        assert_eq!(tool.unwrap()["error"]["code"], -32602);
+        let no_method = handle(&json!({"jsonrpc":"2.0","id":4})).unwrap();
+        assert_eq!(no_method["error"]["code"], -32600);
+        assert!(handle(&json!({"jsonrpc":"2.0","id":5,"result":{}})).is_none());
+        assert_eq!(handle(&json!(7)).unwrap()["error"]["code"], -32600);
     }
 }

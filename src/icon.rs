@@ -24,9 +24,9 @@ const ICON_SCALE: f32 = 1.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Glyph {
-    /// Every lens is clear: the three lenses, solid.
+    /// Every lens is clear: the three lenses, filled, fading from front to back.
     Protected,
-    /// A lens found something that needs attention: the three lenses, solid, in orange.
+    /// A lens found something that needs attention: the filled lenses, in orange.
     Problem,
     /// No result yet: the three lenses in outline.
     Checking,

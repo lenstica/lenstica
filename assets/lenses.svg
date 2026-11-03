@@ -1,21 +1,22 @@
 <!-- Lenstica menu bar glyph: the logo's three lenses, growing from left to
-     right, each solid and in front of the one to its left with a thin gap. -->
+     right, each in front of the one to its left with a thin gap. The lenses
+     fade with distance, so the front one is solid and the back one faintest. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
   <defs>
   <mask id="k1" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
   <rect width="24" height="24" fill="#fff"/>
-  <path d="M10.25 4C11.69 4 14.41 7.2 14.41 12C14.41 16.8 11.69 20 10.25 20C8.81 20 6.09 16.8 6.09 12C6.09 7.2 8.81 4 10.25 4Z" fill="#000" stroke="#000" stroke-width="3.2"/>
+  <path d="M10.81 3C12.43 3 15.49 6.6 15.49 12C15.49 17.4 12.43 21 10.81 21C9.19 21 6.13 17.4 6.13 12C6.13 6.6 9.19 3 10.81 3Z" fill="#000" stroke="#000" stroke-width="3.2"/>
   </mask>
   <mask id="k2" maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
   <rect width="24" height="24" fill="#fff"/>
-  <path d="M15.87 2C17.67 2 21.07 6 21.07 12C21.07 18 17.67 22 15.87 22C14.07 22 10.67 18 10.67 12C10.67 6 14.07 2 15.87 2Z" fill="#000" stroke="#000" stroke-width="3.2"/>
+  <path d="M16.48 2C18.28 2 21.68 6 21.68 12C21.68 18 18.28 22 16.48 22C14.68 22 11.28 18 11.28 12C11.28 6 14.68 2 16.48 2Z" fill="#000" stroke="#000" stroke-width="3.2"/>
   </mask>
   </defs>
   <g mask="url(#k2)">
   <g mask="url(#k1)">
-  <path d="M5.95 6.2C6.99 6.2 8.96 8.52 8.96 12C8.96 15.48 6.99 17.8 5.95 17.8C4.9 17.8 2.93 15.48 2.93 12C2.93 8.52 4.9 6.2 5.95 6.2Z" fill="currentColor"/>
+  <path d="M5.96 5C7.22 5 9.6 7.8 9.6 12C9.6 16.2 7.22 19 5.96 19C4.7 19 2.32 16.2 2.32 12C2.32 7.8 4.7 5 5.96 5Z" fill="currentColor" fill-opacity="0.45"/>
   </g>
-  <path d="M10.25 4C11.69 4 14.41 7.2 14.41 12C14.41 16.8 11.69 20 10.25 20C8.81 20 6.09 16.8 6.09 12C6.09 7.2 8.81 4 10.25 4Z" fill="currentColor"/>
+  <path d="M10.81 3C12.43 3 15.49 6.6 15.49 12C15.49 17.4 12.43 21 10.81 21C9.19 21 6.13 17.4 6.13 12C6.13 6.6 9.19 3 10.81 3Z" fill="currentColor" fill-opacity="0.72"/>
   </g>
-  <path d="M15.87 2C17.67 2 21.07 6 21.07 12C21.07 18 17.67 22 15.87 22C14.07 22 10.67 18 10.67 12C10.67 6 14.07 2 15.87 2Z" fill="currentColor"/>
+  <path d="M16.48 2C18.28 2 21.68 6 21.68 12C21.68 18 18.28 22 16.48 22C14.68 22 11.28 18 11.28 12C11.28 6 14.68 2 16.48 2Z" fill="currentColor"/>
 </svg>

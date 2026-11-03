@@ -158,7 +158,7 @@ not in public issues.
 ## Thanks
 
 Thanks to [Tim Mikeladze](https://github.com/TimMikeladze) for the script that
-first inspired Lenstica.
+inspired Lenstica.
 
 ## License
 

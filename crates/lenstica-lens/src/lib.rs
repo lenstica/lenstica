@@ -104,6 +104,7 @@ pub mod topic {
     pub const EXPOSED: &str = "exposed";
     pub const LEAKED: &str = "leaked";
     pub const TELEMETRY: &str = "telemetry";
+    pub const OPEN_PORTS: &str = "open-ports";
 }
 
 impl Category {
@@ -191,7 +192,8 @@ impl Category {
             ],
             Category::Secrets => &[(EXPOSED, "Exposed"), (LEAKED, "Leaked")],
             Category::Privacy => &[(TELEMETRY, "Telemetry")],
-            Category::Malware | Category::Network => &[],
+            Category::Network => &[(OPEN_PORTS, "Open ports")],
+            Category::Malware => &[],
         }
     }
 }

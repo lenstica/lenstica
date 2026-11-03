@@ -112,7 +112,8 @@
     "auto-updates": "Auto updates",
     "exposed": "Exposed",
     "leaked": "Leaked",
-    "telemetry": "Telemetry"
+    "telemetry": "Telemetry",
+    "open-ports": "Open ports"
   },
   "overview": {
     "title": "Overview",
@@ -202,11 +203,32 @@
     "ignoreVersion": "Ignore {name}@{version}",
     "ignoreAll": "Ignore all of {name}",
     "ignoreAdvisory": "Ignore {id}",
+    "ignoreListenerPort": "Ignore {program} on port {port}",
     "where": "Where ({count})",
     "open": "Open",
     "reveal": "Reveal",
     "references": "References",
     "key": "Key: {key}"
+  },
+  "network": {
+    "listening": "Listening now",
+    "count": {
+      "one": "{count} program and port",
+      "other": "{count} programs and ports"
+    },
+    "visibility": "Programs on this machine that accept TCP connections. Only programs running as you are visible; system services that run as administrator are not.",
+    "refresh": "Look again",
+    "loading": "Asking the system what is listening…",
+    "error": "Could not list listening programs",
+    "reachable": "Reachable from your network",
+    "reachableNote": "Other devices on the same Wi-Fi or LAN can connect to these, unless a firewall blocks them.",
+    "noneReachable": "Nothing accepts connections from your network",
+    "local": "This machine only ({count})",
+    "localNote": "Bound to localhost: only programs on this machine can connect.",
+    "noneLocal": "Nothing listens on localhost",
+    "everyInterface": "every network interface",
+    "pids": "pid {pids}",
+    "showFinding": "Show its finding"
   },
   "prompt": {
     "title": "Prompt for your AI agent",
@@ -413,6 +435,7 @@
     "copiedMany": "Copied a prompt covering {count} findings",
     "ignoredPackage": "Added {entry} to audit.ignore",
     "ignoredAdvisory": "Ignoring advisory {id}",
+    "ignoredListener": "No longer flagging {entry} on your network",
     "saved": "Saved {setting}",
     "manage": "Lenstica will manage {name}",
     "leaveAlone": "Lenstica will leave {name} alone",

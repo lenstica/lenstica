@@ -109,6 +109,30 @@ pub fn prompt_text(app: AppHandle, items: Vec<PromptItem>) -> Result<Value, Stri
     Ok(serde_json::json!({ "text": text, "count": count }))
 }
 
+/// What is listening for connections right now, for the Network page, with
+/// the key of the `listening-ports` finding that covers each one. Async:
+/// the OS is asked afresh each time the page refreshes.
+#[tauri::command]
+pub async fn list_listening() -> Result<Value, String> {
+    let list = crate::network::listening().map_err(|e| format!("{e:#}"))?;
+    Ok(Value::Array(
+        list.iter()
+            .map(|l| {
+                serde_json::json!({
+                    "process": l.process,
+                    "path": l.path,
+                    "pids": l.pids,
+                    "port": l.port,
+                    "sockets": l.sockets(),
+                    "reach": l.reach(),
+                    "allInterfaces": l.all_interfaces(),
+                    "findingKey": crate::lenses::ports::finding_key(l),
+                })
+            })
+            .collect(),
+    ))
+}
+
 #[tauri::command]
 pub fn action(app: AppHandle, msg: Value) -> Result<(), String> {
     if super::debug() {
@@ -195,6 +219,15 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             config::add_to_list(&["lenses", "vulnerabilities", "ignore_advisories"], id)?;
             super::toast(app, t!("toast.ignoredAdvisory", id = id), true);
             state.send(Request::Run(vec!["vulnerabilities".to_string()], true));
+        }
+        "ignoreListener" => {
+            let entry = str_field(msg, "entry")?;
+            config::add_to_list(&["lenses", crate::lenses::ports::ID, "ignore"], entry)?;
+            super::toast(app, t!("toast.ignoredListener", entry = entry), true);
+            state.send(Request::Run(
+                vec![crate::lenses::ports::ID.to_string()],
+                true,
+            ));
         }
         "setting" => {
             let path: Vec<String> = msg

@@ -19,6 +19,7 @@ lenstica findings --severity high --json # only high and critical
 lenstica findings --lens secrets --json
 lenstica prompt                          # a ready-made brief of everything needing attention
 lenstica prompt <lens> '<key>'        # the brief for one finding
+lenstica network --json                  # what accepts connections, and whether the network can reach it
 ```
 
 Each finding has `lens`, `key`, `severity` (info, low, medium, high,
@@ -56,6 +57,11 @@ Lens by lens:
   quote more of it than the finding does. Report the listed lines to the user
   and remove them only when asked. `fixable` ones (invisible characters) can be
   stripped with `lenstica fix`. For a plugin, suggest uninstalling it.
+- `listening-ports`: a program other devices on the network can connect to.
+  Find what started it (a `docker compose` file, a dev-server script, a
+  database config) and bind it to `127.0.0.1`, or publish container ports as
+  `127.0.0.1:<port>:<port>`, as the remedy says. Ask before stopping a running
+  process or changing a shared compose file.
 - `software`: installed software (Homebrew, package managers, toolchains)
   younger than the minimum age. Usually nothing to undo; review it and add it
   to `software.ignore` once checked, if the user agrees.

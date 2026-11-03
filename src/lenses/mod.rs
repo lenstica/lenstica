@@ -15,6 +15,7 @@ mod external;
 mod homebrew;
 mod managers;
 mod osv;
+pub mod ports;
 mod projects;
 mod safe_chain;
 mod scripts;
@@ -99,6 +100,7 @@ pub fn registry(cfg: &Config) -> Vec<Registered> {
         builtin(homebrew::HomebrewUpdates, Group::Settings),
         builtin(safe_chain::SafeChain, Group::Other),
         builtin(agents::AgentInstructions, Group::Other),
+        builtin(ports::ListeningPorts, Group::Other),
     ];
     // Plugin crates: each one is a dependency implementing `lenstica_lens::Lens`,
     // registered here behind its feature.

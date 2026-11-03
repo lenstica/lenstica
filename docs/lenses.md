@@ -13,6 +13,7 @@ know findings, so a new lens shows up everywhere. `lenstica lenses` lists them.
 - [Aikido Safe Chain](#aikido-safe-chain)
 - [Exposed secrets](#exposed-secrets)
 - [AI agent instructions](#ai-agent-instructions)
+- [Listening ports](#listening-ports)
 
 To add your own, see [Writing lenses](writing-lenses.md).
 
@@ -29,7 +30,7 @@ menu bar menu a submenu per category; a category no lens covers is not shown.
 | Software (`software`) | Too new, Outdated, Auto updates | `software`, `homebrew-updates` |
 | Secrets (`secrets`) | Exposed, Leaked | `secrets`; gitleaks and trufflehog as external tools |
 | Malware (`malware`) | | `vulnerabilities` (malicious releases), `aikido-malware`, `safe-chain` |
-| Network (`network`) | | none yet |
+| Network (`network`) | Open ports | `listening-ports` |
 | Privacy (`privacy`) | Telemetry | `aikido-malware` (its telemetry list) |
 
 Rules violations and Outdated are there for lenses to report; no built-in
@@ -65,6 +66,7 @@ External tools under `[[external]]` are yours to add, so they run once declared.
 | `safe-chain` (opt-in) | Whether Aikido Safe Chain is installed and loaded by your shells; recommends it when it is not ([below](#aikido-safe-chain)). Click to run `safe-chain setup`. | info / low |
 | `install-scripts` | Package managers that run dependencies' install scripts (how Shai-Hulud-style worms execute). Click to block, or set `install_scripts.block = true`. | low |
 | `secrets` | Credentials malware running as you could steal ([below](#exposed-secrets)). A plugin crate. | critical … info |
+| `listening-ports` | Programs that other devices on your network can connect to: debuggers, the Docker API, databases, container ports and development servers bound to every interface instead of localhost ([below](#listening-ports)). | critical … info |
 | `agent-instructions` | AI agent instruction files (CLAUDE.md, AGENTS.md, rules, skills, plugins, hooks, MCP configs) with hidden text, prompt injection, credential-leaking or remote-code instructions, and settings that let an injected instruction run without asking ([below](#ai-agent-instructions)). Click to strip invisible characters. | critical … low |
 
 Per-lens settings live under `[lenses.<id>]` in the settings file, with
@@ -212,3 +214,42 @@ proof. Phrases that are negated ("never pipe curl into sh") or quoted as an
 example are skipped. Findings show the line and the few matched words, never
 the surrounding text, and a copied prompt tells the agent the file is
 untrusted. Accept reviewed files with `[lenses.agent-instructions] ignore`.
+
+## Listening ports
+
+A laptop joins office, home, café, hotel and conference networks, and every
+device on them can connect to whatever listens on an address other than
+loopback (`127.0.0.1`, `::1`). The `listening-ports` lens asks the operating
+system which TCP ports are listening and which program owns each one, then
+reports what other devices can reach:
+
+| What | Examples | Severity | One finding per |
+|------|----------|----------|-----------------|
+| Debuggers and remote control | Node.js inspector (9229), Chrome remote debugging (9222), debugpy (5678), Java JDWP (5005), Docker Engine API without TLS (2375) | critical | port |
+| Databases and brokers | PostgreSQL, MySQL, MongoDB, Redis, Memcached, Elasticsearch, ClickHouse, CouchDB, Cassandra, Neo4j, RabbitMQ, Kafka, SQL Server, etcd, CockroachDB, InfluxDB | high | port |
+| Jupyter | 8888 | medium | port |
+| Container ports | Published by Docker, OrbStack, Podman or Lima without an address, so on every interface | medium | program |
+| Development servers | Node.js, Deno, Bun, Python, Ruby, PHP, Java, .NET, Erlang/Elixir | medium | program |
+| Anything else | AirPlay Receiver, sync and sharing apps | info | program |
+
+Known services are recognised by their default port, or by process name on
+any port (`postgres`, `redis-server`, `mongod` …). Each finding names the
+program, its process IDs and addresses, and a remedy for that service: bind
+to `127.0.0.1`, or publish container ports as `127.0.0.1:5432:5432`
+(Docker's `"ip": "127.0.0.1"` in daemon.json makes that the default).
+
+What only this machine can reach is listed as checked. Everything appears on
+the window's **Network** page and in `lenstica network`.
+
+- **Only programs running as you are visible.** Without administrator rights
+  the OS does not say which program owns another user's socket. Development
+  servers, databases from Homebrew and container runtimes run as you; system
+  services such as a root-owned `sshd` are left out.
+- **TCP only.** UDP has no listening state, and the many sockets apps open
+  for their own replies would drown out the few that matter.
+- **Firewalls are not taken into account yet.** A program your firewall
+  blocks is still reported.
+
+To accept one, click **Ignore** on the finding, or list it in
+`[lenses.listening-ports] ignore` as a port (`"5432"`), a program (`"Orca"`)
+or both (`"node:3000"`).

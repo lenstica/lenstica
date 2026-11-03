@@ -463,6 +463,8 @@ language = "system"
 # enabled = true           # opt in: recommends installing Aikido Safe Chain
 # [lenses.agent-instructions]
 # ignore = []              # files or folders whose agent instructions you have reviewed, e.g. ["~/.agents/skills/mine"]
+# [lenses.listening-ports]
+# ignore = []              # ports ("5432"), programs ("Orca") or both ("node:3000") you accept on your network
 # max_depth = 6            # how deep to look for CLAUDE.md, AGENTS.md, .claude/, .cursor/ ... in your repositories
 "#;
 

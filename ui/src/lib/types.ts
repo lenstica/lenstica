@@ -108,3 +108,18 @@ export interface Item extends Finding {
   /** Main checkout paths, or "mac" for a location in no project. */
   scopes: Set<string>;
 }
+
+/** One program listening on one TCP port (src/network.rs). */
+export interface Listening {
+  process: string;
+  path: string;
+  pids: number[];
+  port: number;
+  /** `0.0.0.0:5432, [::]:5432`. */
+  sockets: string;
+  /** `network`: other devices can connect; `local`: only this machine. */
+  reach: "network" | "local";
+  allInterfaces: boolean;
+  /** The listening-ports finding that covers it, when other devices can reach it. */
+  findingKey: string | null;
+}

@@ -230,6 +230,7 @@ Kinds:
 | `safe-chain` | Whether Aikido Safe Chain is installed and loaded (opt-in) | ✅ |
 | `secrets` | Credentials on disk: cloud keys, registry tokens, SSH keys without a passphrase, `.env` files, shell history (plugin crate) | ✅ |
 | `agent-instructions` | CLAUDE.md, AGENTS.md, rules, skills, plugins, hooks and MCP configs with hidden text, prompt injection, credential-leak or remote-code instructions, weak agent settings | ✅ |
+| `listening-ports` | Programs other devices on the network can connect to: debuggers, the Docker API, databases, container ports and dev servers bound to every interface instead of localhost; feeds the window's Network page | ✅ |
 
 ### 5.2 Planned and proposed lenses
 
@@ -242,6 +243,8 @@ Kinds:
 | `editor-extensions` | [L-5](#l-5-editor-extensions): VS Code / Cursor / JetBrains extensions younger than the cooldown or known malicious | 💡 |
 | `browser-extensions` | [L-6](#l-6-browser-extensions): browser extensions with broad permissions installed recently | 💡 |
 | `git-hooks` | [L-7](#l-7-git-hooks): repository hooks and `core.hooksPath` running downloaded code | 💡 |
+| `connections` | [L-8](#l-8-network-connections): established outbound connections to addresses on threat-intel blocklists | 💡 |
+| `outbound-firewall` | [L-9](#l-9-firewalls): the OS firewall, and an open-source outbound firewall (LuLu, OpenSnitch, simplewall) installed and running | 💡 |
 
 ## 6. Requirements
 
@@ -400,6 +403,26 @@ auto-update settings.
 💡 `.git/hooks`, `core.hooksPath`, husky and lefthook configs that download
 and run code.
 
+#### L-8 Network connections
+💡 Second lens on the Network page, after `listening-ports`. A snapshot of
+established TCP connections per process, with remote addresses matched
+against blocklists downloaded whole (abuse.ch Feodo Tracker and URLhaus,
+Spamhaus DROP, FireHOL level 1), so nothing about the machine is sent. A
+match is high-confidence and high-severity. Needs remote addresses, which the
+`listeners` crate does not give: `netstat2` does, but runs bindgen against a
+hard-coded Command Line Tools SDK path at build time, so prefer a small
+native reader per OS or a fix upstream. Blocklist CIDRs parse with `ipnet`;
+a sorted vector with binary search is fast enough for lookups.
+
+#### L-9 Firewalls
+💡 Whether the OS firewall is on (macOS application firewall, Windows
+Defender Firewall, ufw/firewalld), and whether an open-source outbound
+firewall is installed and running: LuLu (macOS), OpenSnitch (Linux),
+simplewall (Windows). Offer to install one, as part of making open-source
+security tools one click. osquery, Zeek and Suricata are later, opt-in
+options for people who want deeper monitoring: they need administrator
+rights or a network sensor.
+
 ### 8.3 The lens ecosystem
 
 #### F-10 Lens installation
@@ -549,6 +572,7 @@ Newest last. Dates are when the work landed in the local build.
 | 2026-11-03 | Prompt templates: `[prompts]` `finding`, `findings` and `item`, edited in Settings → AI prompts with a live preview; the defaults write the same prompts as before |
 | 2026-11-03 | Window: one component set (every button and field 32px, navigation rows 36px), translatable text with a language setting, WCAG AA text colours, keyboard-navigable findings list; Lighthouse accessibility 100 on every page |
 | 2026-11-03 | Code review pass: state writes serialised (no lost or corrupt `findings.json`), menu built without holding the shared lock, no secret text in agent-lens notes or MCP URLs, OSV fix versions per advisory with real version ordering and pagination, private-registry packages kept off the network, wall-clock scheduling, safer Windows opener, pinned release workflow; shared helpers replace duplicated code |
+| 2026-11-03 | Listening-ports lens and the window's Network page: what accepts connections, and from where (this machine or the network), through the `listeners` crate; known services (debuggers, Docker API, databases) per port with their own remedies, container ports and dev servers per program, other apps informational; `[lenses.listening-ports] ignore`; `lenstica network` |
 
 ## 10. Decisions
 

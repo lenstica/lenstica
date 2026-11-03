@@ -19,6 +19,8 @@
   const parts = $derived(item.key.split("|"));
   const pkg = $derived(DEP_KINDS.includes(parts[0]) && parts.length >= 4 ? { name: parts[2], version: parts[3] } : null);
   const advisories = $derived(parts[0] === "vuln" && parts[4] ? parts[4].split(",").slice(0, 3) : []);
+  // Listening-ports keys: `listen|<program>` or `listen|<program>|<port>`.
+  const listener = $derived(item.lens === "listening-ports" && parts[0] === "listen" ? { program: parts[1], port: parts[2] } : null);
 </script>
 
 <div class="flex flex-wrap items-center gap-2">
@@ -44,6 +46,16 @@
     </Button>
     <Button onclick={() => post({ type: "ignorePackage", entry: pkg.name, lens: item.lens })}>
       <EyeOff size={14} />{t("finding.ignoreAll", { name: pkg.name })}
+    </Button>
+  {/if}
+  {#if listener}
+    {#if listener.port}
+      <Button onclick={() => post({ type: "ignoreListener", entry: `${listener.program}:${listener.port}` })}>
+        <EyeOff size={14} />{t("finding.ignoreListenerPort", { program: listener.program, port: listener.port })}
+      </Button>
+    {/if}
+    <Button onclick={() => post({ type: "ignoreListener", entry: listener.program })}>
+      <EyeOff size={14} />{t("finding.ignoreAll", { name: listener.program })}
     </Button>
   {/if}
   {#each advisories as id (id)}

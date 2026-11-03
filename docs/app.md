@@ -13,8 +13,8 @@ when something does (the tooltip gives the count), and outlined while the first
 checks run.
 
 The menu has one submenu per [category](lenses.md#categories) (AI agents,
-Packages, Software, Secrets, Malware, and Network and Privacy once a lens
-covers them), each with a coloured dot: green when clear, the colour of its
+Packages, Software, Secrets, Malware, Network, and Privacy once a lens
+covers it), each with a coloured dot: green when clear, the colour of its
 worst finding when not, indigo while running, hollow before the first run.
 Inside, each of the category's lenses has a line with its own dot and summary
 (a lens that is off says so, and whether it is third party), then come the
@@ -45,8 +45,13 @@ the top bar, beside the logo, and dragging the bar moves the window
   injection, Cooldown, Exposed…), severity and text; the details, remedy,
   every location (open or reveal), references, and actions: fix, copy a
   prompt for an AI agent, ignore a package or one version of it, ignore an
-  advisory. One button copies a single prompt for everything shown. A prompt
-  is shown before it is copied.
+  advisory, ignore a listening program or one of its ports. One button copies
+  a single prompt for everything shown. A prompt is shown before it is copied.
+- **Network** also lists every program **listening now** for TCP
+  connections: first what other devices on your network can reach (riskiest
+  first, with the severity of the `listening-ports` finding that covers it;
+  click one for its finding), then, folded away, what only this machine can.
+  It looks again every 10 seconds while open.
 - **The project picker**: which project the window shows. **All projects**,
   **This Mac** (findings in no repository: package-manager settings,
   installed software, credentials in your home folder, global agent

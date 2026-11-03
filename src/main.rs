@@ -16,6 +16,7 @@ mod lenses;
 mod managers;
 mod mcp;
 mod migrate;
+mod network;
 mod notify;
 mod paths;
 mod prompt;
@@ -141,6 +142,11 @@ enum Command {
     },
     /// List the package managers Lenstica configures and how
     Managers,
+    /// List the programs accepting network connections, and whether other devices can reach them
+    Network {
+        #[arg(long)]
+        json: bool,
+    },
     /// Run the lenses continuously in the foreground with notifications, no icon
     Watch {
         /// Run one pass and exit
@@ -458,6 +464,7 @@ fn run(command: Command) -> Result<ExitCode> {
             print_managers();
             Ok(ExitCode::SUCCESS)
         }
+        Command::Network { json } => network_cmd(json),
         Command::Watch { once } => watch(once),
         Command::Tray => tray(),
         Command::Window { page } => window(page),
@@ -950,6 +957,71 @@ fn print_outcomes(outcomes: &[managers::Outcome], days: u32, dry_run: bool) {
             "Every package manager above now refuses versions newer than {days} days, unless marked otherwise."
         );
     }
+}
+
+/// Everything listening, with the severity of the `listening-ports` finding
+/// that covers it (the lens runs first, when it is on).
+fn network_cmd(json: bool) -> Result<ExitCode> {
+    let cfg = Config::load()?;
+    let list = network::listening()?;
+    let r = lenses::find(&cfg, lenses::ports::ID)?;
+    let findings = if lenses::enabled(&cfg, &r) {
+        lenses::run(&cfg, &r, false).findings
+    } else {
+        Vec::new()
+    };
+    let finding = |l: &network::Listening| {
+        lenses::ports::finding_key(l).and_then(|k| findings.iter().find(|f| f.key == k))
+    };
+    if json {
+        let out: Vec<serde_json::Value> = list
+            .iter()
+            .map(|l| {
+                serde_json::json!({
+                    "process": l.process,
+                    "path": l.path,
+                    "pids": l.pids,
+                    "port": l.port,
+                    "addresses": l.addresses,
+                    "reach": l.reach(),
+                    "severity": finding(l).map(|f| f.severity),
+                    "finding": finding(l).map(|f| &f.key),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let s = Style::detect();
+    for (reach, heading) in [
+        (network::Reach::Network, "Reachable from your network"),
+        (network::Reach::Local, "This machine only"),
+    ] {
+        let group: Vec<_> = list.iter().filter(|l| l.reach() == reach).collect();
+        println!(
+            "{} {}",
+            s.bold(heading),
+            s.dim(&format!("({})", group.len()))
+        );
+        for l in group {
+            let tag = match finding(l) {
+                Some(f) => severity_tag(&s, f.severity),
+                None => " ".repeat(8),
+            };
+            println!(
+                "  {tag} {:<22} {:>5}  {}",
+                l.process,
+                l.port,
+                s.dim(&l.sockets())
+            );
+        }
+        println!();
+    }
+    println!(
+        "{}",
+        s.dim("Only programs running as you are visible. Details and remedies: `lenstica findings --lens listening-ports`.")
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn print_managers() {

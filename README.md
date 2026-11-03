@@ -16,7 +16,8 @@
 Lenstica is a security monitor for your development machine. It sets a 7-day
 cooldown in your JavaScript, Python and Rust package managers, so they only
 install versions at least a week old. It also watches for malicious packages,
-exposed credentials and poisoned AI-agent instructions.
+exposed credentials, poisoned AI-agent instructions and services other
+devices on your network can reach.
 
 Each check is a **lens** that looks for one kind of risk. Findings appear in
 the menu bar, the window, the CLI and your AI agent, each with a remedy and
@@ -30,6 +31,7 @@ often a one-click fix.
 | **Dependency audit** | Finds too-new and deprecated packages in every lockfile, worktree and global install, and, if you turn them on, vulnerable and malicious ones |
 | **Exposed secrets** | Finds credentials that malware running as you could steal, without storing or showing their values |
 | **AI-agent instructions** | Flags hidden text, prompt injection and risky settings in CLAUDE.md, AGENTS.md, skills, hooks and MCP configs |
+| **Network exposure** | Shows what accepts connections and flags debuggers, databases, container ports and dev servers that other devices on your Wi-Fi can reach |
 | **Software ages** | Flags package managers, Homebrew formulae and casks, Rust toolchains and Node.js releases that are too new |
 | **One-click fixes** | Fixes findings from the menu or the CLI, and backs up every file it edits |
 | **Your own lenses** | Runs your own checks: a Rust crate, any CLI that prints JSON, or gitleaks, osv-scanner and trufflehog |
@@ -76,6 +78,7 @@ lenstica autostart install  # start the menu bar app at every login
   `scan.roots` in `~/.config/lenstica/lenstica.toml` or open Settings in the
   window.
 - To change the cooldown, run `lenstica set <days>`.
+- `lenstica network` lists what accepts connections, and from where.
 - `lenstica check` exits with status 1 when something needs attention, for
   scripts and CI.
 - `lenstica --help` lists every command.
@@ -100,6 +103,7 @@ them, and [docs/lenses.md](docs/lenses.md) describes each one.
 | Secrets | `secrets` | Credentials malware could steal |
 | Malware, Privacy | `aikido-malware`\* | Packages on Aikido Intel's malware and telemetry lists |
 | Malware | `safe-chain`\* | Whether Aikido Safe Chain is set up |
+| Network | `listening-ports` | Debuggers, databases, container ports and dev servers reachable from your network |
 
 \* Relies on a third party, so it is off until you turn it on in its
 category (or with `enabled = true` under `[lenses.<id>]`).

@@ -139,7 +139,8 @@ pub fn run(open_window: Option<String>) -> Result<()> {
             commands::get_state,
             commands::list_repos,
             commands::preview_prompt,
-            commands::prompt_text
+            commands::prompt_text,
+            commands::list_listening
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

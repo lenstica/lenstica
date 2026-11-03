@@ -23,6 +23,7 @@
   import type { Category, Severity } from "../types";
   import FindingDetail from "./FindingDetail.svelte";
   import LensCard from "./LensCard.svelte";
+  import ListeningPanel from "./ListeningPanel.svelte";
 
   let { category }: { category: Category } = $props();
 
@@ -125,6 +126,8 @@
       {#each lenses as lens (lens.id)}<LensCard {lens} />{/each}
     </div>
   </section>
+
+  {#if category.id === "network"}<ListeningPanel />{/if}
 
   <section class="mt-8">
     <SectionHeading title={t("category.findings")} aside={t("category.shown", { count: shown.length })} />

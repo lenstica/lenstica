@@ -77,6 +77,9 @@ ignore = []                # files or folders you have reviewed, e.g. ["~/.agent
 [lenses.deprecated]
 notify = false             # list a lens's findings without notifying them
 
+[lenses.listening-ports]
+ignore = []                # ports ("5432"), programs ("Orca") or both ("node:3000") you accept
+
 [lenses.vulnerabilities]
 enabled = true             # opt in: sends package names and versions to OSV.dev
 refresh_hours = 6

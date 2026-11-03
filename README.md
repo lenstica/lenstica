@@ -155,6 +155,11 @@ Please report vulnerabilities through
 [private vulnerability reporting](https://github.com/lenstica/lenstica/security/advisories/new),
 not in public issues.
 
+## Thanks
+
+Thanks to [Tim Mikeladze](https://github.com/TimMikeladze) for the script that
+first inspired Lenstica.
+
 ## License
 
 [Apache 2.0](LICENSE), see [NOTICE](NOTICE). Icons are from

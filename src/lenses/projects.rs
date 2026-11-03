@@ -1,7 +1,7 @@
 //! Project files that override the cooldown with a weaker one.
 
 use anyhow::Result;
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Location, Report, Severity, topic};
 
 use super::shared;
 use crate::config::Config;
@@ -19,6 +19,9 @@ impl Lens for ProjectSettings {
     fn description(&self) -> &str {
         "Repository config files (.npmrc, pnpm-workspace.yaml, uv.toml, ...) that lower or disable the cooldown for that repository. Reported, never edited."
     }
+    fn categories(&self) -> &[Category] {
+        &[Category::Packages]
+    }
 
     fn run(&self, cx: &Context) -> Result<Report> {
         let cfg = Config::load()?;
@@ -32,9 +35,9 @@ impl Lens for ProjectSettings {
                 Finding::new(
                     format!("{}|{}|{}", f.full_path.display(), f.setting, f.value),
                     Severity::Medium,
-                    "cooldown",
+                    Category::Packages,
                     format!("{} lowers the {} cooldown to {}", f.path, f.manager, f.age),
-                )
+                ).topic(topic::COOLDOWN)
                 .detail(format!("{} = {} overrides your {}-day setting for this repository.", f.setting, f.value, cfg.min_days))
                 .remedy("Raise or remove the setting in that file (Lenstica never edits project files).")
                 .at(Location::file(f.path.clone(), f.full_path.clone()))

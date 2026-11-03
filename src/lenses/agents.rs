@@ -28,7 +28,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use lenstica_lens::{Context, Exclude, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Exclude, Finding, Lens, Location, Report, Severity, topic};
 use regex::Regex;
 use serde_json::Value;
 use walkdir::WalkDir;
@@ -126,6 +126,22 @@ impl Rule {
             Rule::AutoApproveMcp => "auto-approve-mcp",
             Rule::InsecureMcp => "insecure-mcp",
             Rule::UnpinnedMcp => "unpinned-mcp",
+        }
+    }
+
+    /// The window's filter this rule falls under.
+    fn topic(self) -> &'static str {
+        match self {
+            Rule::HiddenText | Rule::Bidi | Rule::ZeroWidth | Rule::Encoded => topic::HIDDEN_TEXT,
+            Rule::Override
+            | Rule::Conceal
+            | Rule::Exfil
+            | Rule::ExfilEndpoint
+            | Rule::RemoteCode
+            | Rule::RemoteInstructions
+            | Rule::SafetyBypass => topic::PROMPT_INJECTION,
+            Rule::PermissionsOff | Rule::AutoApproveMcp => topic::PERMISSIONS,
+            Rule::InsecureMcp | Rule::UnpinnedMcp => topic::MCP,
         }
     }
 
@@ -1514,13 +1530,14 @@ fn findings_for(t: &Target, hits: Vec<Hit>, copies: &[PathBuf]) -> Vec<Finding> 
                     fingerprint(&hits)
                 ),
                 severity,
-                "agent",
+                Category::Agents,
                 match copies.len() {
                     0 => format!("{shown} {}", rule.title_for(t.kind)),
                     1 => format!("{shown} {} (and 1 copy)", rule.title_for(t.kind)),
                     n => format!("{shown} {} (and {n} copies)", rule.title_for(t.kind)),
                 },
             )
+            .topic(rule.topic())
             .detail(format!(
                 "{}: {}\n{}",
                 t.origin,
@@ -1605,6 +1622,9 @@ impl Lens for AgentInstructions {
         "CLAUDE.md, AGENTS.md, rules, skills, commands, memory, plugins, hooks and MCP configs for Claude Code, Codex, \
          Cursor, Gemini, Copilot and others: hidden text, prompt injection, instructions to leak credentials or run \
          downloaded code, and settings that let an injected instruction run without asking."
+    }
+    fn categories(&self) -> &[Category] {
+        &[Category::Agents]
     }
     fn default_interval(&self) -> Duration {
         Duration::from_secs(30 * 60)

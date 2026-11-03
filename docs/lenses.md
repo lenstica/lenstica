@@ -1,10 +1,12 @@
 # Lenses
 
 Everything Lenstica checks is a **lens** producing findings in one format
-(severity, category, title, details, locations, remedy, links, and whether it
-can fix it). The menu, the window, notifications and the CLI only know
-findings, so a new lens shows up everywhere. `lenstica lenses` lists them.
+(severity, category and topic, title, details, locations, remedy, links, and
+whether it can fix it). The menu, the window, notifications and the CLI only
+know findings, so a new lens shows up everywhere. `lenstica lenses` lists them.
 
+- [Categories](#categories)
+- [Third-party lenses are opt-in](#third-party-lenses-are-opt-in)
 - [Built-in lenses](#built-in-lenses)
 - [Dependencies: where packages are read from](#dependencies-where-packages-are-read-from)
 - [Software ages](#software-ages)
@@ -14,6 +16,40 @@ findings, so a new lens shows up everywhere. `lenstica lenses` lists them.
 
 To add your own, see [Writing lenses](writing-lenses.md).
 
+## Categories
+
+Every lens registers with one or more categories, and every finding names one
+and, usually, a topic within it. The window has a page per category and the
+menu bar menu a submenu per category; a category no lens covers is not shown.
+
+| Category (id) | Topics | Lenses |
+|---------------|--------|--------|
+| AI agents (`agents`) | Prompt injection, Hidden text, Elevated permissions, Rules violations, MCP servers | `agent-instructions` |
+| Packages (`packages`) | Cooldown, Install scripts, Vulnerabilities, Deprecated | `package-managers`, `project-settings`, `package-age`, `install-scripts`, `deprecated`, `vulnerabilities` |
+| Software (`software`) | Too new, Outdated, Auto updates | `software`, `homebrew-updates` |
+| Secrets (`secrets`) | Exposed, Leaked | `secrets`; gitleaks and trufflehog as external tools |
+| Malware (`malware`) | | `vulnerabilities` (malicious releases), `aikido-malware`, `safe-chain` |
+| Network (`network`) | | none yet |
+| Privacy (`privacy`) | Telemetry | `aikido-malware` (its telemetry list) |
+
+Rules violations and Outdated are there for lenses to report; no built-in
+lens does yet. `lenstica findings --category <id>` and the MCP server filter
+by category.
+
+## Third-party lenses are opt-in
+
+A lens that relies on a third party, a service it sends data to or a tool it
+runs or recommends, is off until you turn it on, in its category's page or
+with `enabled = true` under `[lenses.<id>]`:
+
+| Lens | Relies on |
+|------|-----------|
+| `vulnerabilities` | OSV.dev: the names and versions of your locked and installed packages are sent to it |
+| `aikido-malware` | Aikido Security: its malware, protestware and telemetry lists are downloaded (whole, so no package names are sent) |
+| `safe-chain` | Aikido Safe Chain: recommends installing it, and can run its `safe-chain setup` |
+
+External tools under `[[external]]` are yours to add, so they run once declared.
+
 ## Built-in lenses
 
 | id | What it finds | Severity |
@@ -21,12 +57,12 @@ To add your own, see [Writing lenses](writing-lenses.md).
 | `package-managers` | A package manager without the cooldown, a weaker one, or too old to have it. Re-applied automatically (`monitor.auto_apply`); click to fix. | high / medium |
 | `project-settings` | Repository files that lower the cooldown (`.npmrc`, `pnpm-workspace.yaml`, `.yarnrc.yml`, `bunfig.toml`, `uv.toml`, `pyproject.toml`, `poetry.toml`, `pip.conf`). Reported, never edited. | medium |
 | `package-age` | Locked or installed versions published less than N days ago; and ones that were that young when their lockfile last changed. | medium / info |
-| `vulnerabilities` | Known vulnerabilities and **malicious releases**, from [OSV.dev](https://osv.dev) (GitHub, PyPI, RustSec and OpenSSF malicious-packages advisories; RustSec's unmaintained and unsound notices are informational). Malware is its own category, always critical, with a remedy that assumes compromise. | per advisory; malware critical |
-| `aikido-malware` | Locked and installed npm and PyPI packages on [Aikido Intel](https://intel.aikido.dev)'s malware, protestware and telemetry lists, the lists [Safe Chain](https://github.com/AikidoSec/safe-chain) blocks downloads with. A second malware source beside OSV.dev. The lists are downloaded whole (about 11 MB, refreshed every 6 hours with an ETag), so no package names are sent. | malware critical, protestware high, telemetry low |
+| `vulnerabilities` (opt-in) | Known vulnerabilities and **malicious releases**, from [OSV.dev](https://osv.dev) (GitHub, PyPI, RustSec and OpenSSF malicious-packages advisories; RustSec's unmaintained and unsound notices are informational). Malicious releases go under Malware, always critical, with a remedy that assumes compromise. | per advisory; malware critical |
+| `aikido-malware` (opt-in) | Locked and installed npm and PyPI packages on [Aikido Intel](https://intel.aikido.dev)'s malware, protestware and telemetry lists, the lists [Safe Chain](https://github.com/AikidoSec/safe-chain) blocks downloads with. A second malware source beside OSV.dev. The lists are downloaded whole (about 11 MB, refreshed every 6 hours with an ETag), so no package names are sent. | malware critical, protestware high, telemetry low |
 | `deprecated` | Versions deprecated on npm or yanked on PyPI or crates.io. | info / low |
 | `software` | Installed **software** published less than N days ago ([below](#software-ages)): the package managers themselves, Homebrew formulae and casks, Rust toolchains, Node.js. | medium |
 | `homebrew-updates` | Homebrew fetching the newest formulae before every install. Click to set `HOMEBREW_NO_AUTO_UPDATE=1` in `~/.homebrew/brew.env`, or set `homebrew.no_auto_update = true`. | low |
-| `safe-chain` | Whether Aikido Safe Chain is installed and loaded by your shells; recommends it when it is not ([below](#aikido-safe-chain)). Click to run `safe-chain setup`. | info / low |
+| `safe-chain` (opt-in) | Whether Aikido Safe Chain is installed and loaded by your shells; recommends it when it is not ([below](#aikido-safe-chain)). Click to run `safe-chain setup`. | info / low |
 | `install-scripts` | Package managers that run dependencies' install scripts (how Shai-Hulud-style worms execute). Click to block, or set `install_scripts.block = true`. | low |
 | `secrets` | Credentials malware running as you could steal ([below](#exposed-secrets)). A plugin crate. | critical … info |
 | `agent-instructions` | AI agent instruction files (CLAUDE.md, AGENTS.md, rules, skills, plugins, hooks, MCP configs) with hidden text, prompt injection, credential-leaking or remote-code instructions, and settings that let an injected instruction run without asking ([below](#ai-agent-instructions)). Click to strip invisible characters. | critical … low |
@@ -45,7 +81,7 @@ and `cargo install`. Crate publish times and yanked status come from the
 crates.io sparse index; crate advisories (RustSec) from OSV.dev.
 
 Package **names and versions** of public npm, PyPI and crates.io packages are
-sent to those registries and OSV.dev. Workspace, git, path, tarball and
+sent to those registries, and to OSV.dev when the `vulnerabilities` lens is on. Workspace, git, path, tarball and
 private-registry entries are skipped where the lockfile records the registry
 (npm, pnpm tarballs, Yarn 1, Bun, uv, Poetry, Cargo); Yarn 2+ lockfiles and
 pnpm's scoped registries do not, so packages from an `npmScopes` or

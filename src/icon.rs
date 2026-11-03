@@ -48,7 +48,7 @@ impl Glyph {
 
     fn color(self) -> &'static str {
         match self {
-            Glyph::Problem => "#ff9500",
+            Glyph::Problem => ATTENTION,
             _ if cfg!(target_os = "macos") => "#000000",
             _ => "#4084f5",
         }
@@ -83,6 +83,14 @@ pub enum MenuIcon {
     Copy,
 }
 
+// The status colours, the same as the window's design tokens
+// (`ui/src/app.css`); a test keeps the two in step.
+const ATTENTION: &str = "#ff9500";
+const CLEAR: &str = "#30a46c";
+const FAILED: &str = "#a18072";
+const RUNNING: &str = "#6e6ef8";
+const INFO: &str = "#8e8e93";
+
 fn severity_color(s: lenstica_lens::Severity) -> &'static str {
     use lenstica_lens::Severity::*;
     match s {
@@ -90,7 +98,7 @@ fn severity_color(s: lenstica_lens::Severity) -> &'static str {
         High => "#f76808",
         Medium => "#f5a524",
         Low => "#3e8ef7",
-        Info => "#8e8e93",
+        Info => INFO,
     }
 }
 
@@ -133,13 +141,13 @@ fn render_menu_icon(icon: MenuIcon) -> Vec<u8> {
                 .replace("stroke-width=\"2\"", "stroke-width=\"2.4\""),
             0.8,
         ),
-        MenuIcon::Ok => (dot("#30a46c", "#30a46c"), 1.0),
+        MenuIcon::Ok => (dot(CLEAR, CLEAR), 1.0),
         MenuIcon::Problem(s) => (dot(severity_color(s), severity_color(s)), 1.0),
-        MenuIcon::Failed => (dot("#a18072", "#a18072"), 1.0),
-        MenuIcon::Running => (dot("#6e6ef8", "#6e6ef8"), 1.0),
-        MenuIcon::NotRun => (dot("none", "#8e8e93"), 1.0),
+        MenuIcon::Failed => (dot(FAILED, FAILED), 1.0),
+        MenuIcon::Running => (dot(RUNNING, RUNNING), 1.0),
+        MenuIcon::NotRun => (dot("none", INFO), 1.0),
         MenuIcon::Copy => (
-            include_str!("../assets/lucide/clipboard-copy.svg").replace("currentColor", "#8e8e93"),
+            include_str!("../assets/lucide/clipboard-copy.svg").replace("currentColor", INFO),
             0.8,
         ),
     };
@@ -168,6 +176,37 @@ fn render(svg: &str, size: u32, share: f32) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn status_colours_match_the_window_tokens() {
+        use lenstica_lens::Severity::*;
+        let tokens = include_str!("../ui/src/app.css");
+        let token = |name: &str| {
+            let key = format!("--color-{name}: ");
+            let at = tokens
+                .find(&key)
+                .unwrap_or_else(|| panic!("no {key} in app.css"))
+                + key.len();
+            tokens[at..at + 7].to_string()
+        };
+        for (s, name) in [
+            (Critical, "critical"),
+            (High, "high"),
+            (Medium, "medium"),
+            (Low, "low"),
+            (Info, "info"),
+        ] {
+            assert_eq!(severity_color(s), token(name), "{name}");
+        }
+        for (colour, name) in [
+            (CLEAR, "clear"),
+            (FAILED, "failed"),
+            (RUNNING, "running"),
+            (ATTENTION, "attention"),
+        ] {
+            assert_eq!(colour, token(name), "{name}");
+        }
+    }
 
     /// `cargo test icon -- --nocapture` prints each icon for eyeballing.
     #[test]

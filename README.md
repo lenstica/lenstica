@@ -27,7 +27,7 @@ often a one-click fix.
 | Feature | What it does |
 |---------|--------------|
 | **Cooldown everywhere** | Sets a 7-day minimum release age in npm, pnpm, Yarn, Bun, uv, pip, Poetry and Cargo, and restores it if something resets it |
-| **Dependency audit** | Finds too-new, vulnerable, malicious and deprecated packages in every lockfile, worktree and global install |
+| **Dependency audit** | Finds too-new and deprecated packages in every lockfile, worktree and global install, and, if you turn them on, vulnerable and malicious ones |
 | **Exposed secrets** | Finds credentials that malware running as you could steal, without storing or showing their values |
 | **AI-agent instructions** | Flags hidden text, prompt injection and risky settings in CLAUDE.md, AGENTS.md, skills, hooks and MCP configs |
 | **Software ages** | Flags package managers, Homebrew formulae and casks, Rust toolchains and Node.js releases that are too new |
@@ -82,30 +82,34 @@ lenstica autostart install  # start the menu bar app at every login
 
 ## Lenses
 
-Each lens looks for one kind of risk. `lenstica lenses` lists them, and
-[docs/lenses.md](docs/lenses.md) describes each one.
+Each lens looks for one kind of risk and belongs to one or more categories,
+which organise the window and the menu bar menu. `lenstica lenses` lists
+them, and [docs/lenses.md](docs/lenses.md) describes each one.
 
-| Lens | Finds |
-|------|-------|
-| `package-managers` | Missing or weaker cooldown settings |
-| `project-settings` | Repository files that lower the cooldown |
-| `package-age` | Locked or installed versions younger than the cooldown |
-| `vulnerabilities` | Known vulnerabilities and malware, from OSV.dev |
-| `aikido-malware` | Packages on Aikido Intel's malware lists |
-| `deprecated` | Deprecated (npm) or yanked (PyPI) versions |
-| `software` | Installed software younger than the cooldown |
-| `homebrew-updates` | Homebrew auto-updating before every install |
-| `safe-chain` | Whether Aikido Safe Chain is set up |
-| `install-scripts` | Package managers that run install scripts |
-| `secrets` | Credentials malware could steal |
-| `agent-instructions` | Poisoned AI-agent instructions and risky agent settings |
+| Category | Lens | Finds |
+|----------|------|-------|
+| AI agents | `agent-instructions` | Poisoned AI-agent instructions and risky agent settings |
+| Packages | `package-managers` | Missing or weaker cooldown settings |
+| Packages | `project-settings` | Repository files that lower the cooldown |
+| Packages | `package-age` | Locked or installed versions younger than the cooldown |
+| Packages | `install-scripts` | Package managers that run install scripts |
+| Packages | `deprecated` | Deprecated (npm) or yanked (PyPI, crates.io) versions |
+| Packages, Malware | `vulnerabilities`\* | Known vulnerabilities and malware, from OSV.dev |
+| Software | `software` | Installed software younger than the cooldown |
+| Software | `homebrew-updates` | Homebrew auto-updating before every install |
+| Secrets | `secrets` | Credentials malware could steal |
+| Malware, Privacy | `aikido-malware`\* | Packages on Aikido Intel's malware and telemetry lists |
+| Malware | `safe-chain`\* | Whether Aikido Safe Chain is set up |
+
+\* Relies on a third party, so it is off until you turn it on in its
+category (or with `enabled = true` under `[lenses.<id>]`).
 
 ## AI agents
 
 Lenstica can hand its findings to Claude Code and other coding agents:
 
 - **Prompt**: click **Copy Prompt for AI Agent** on any finding, or run
-  `lenstica prompt`.
+  `lenstica prompt`. The prompts are templates you can change in Settings.
 - **Skill**: `lenstica skill --install` teaches Claude Code the CLI.
 - **MCP server**: `claude mcp add --scope user lenstica -- lenstica mcp`, or
   `lenstica mcp --setup` for other agents.
@@ -115,12 +119,16 @@ Lenstica can hand its findings to Claude Code and other coding agents:
 Lenstica has no account and no telemetry. It sends only what it needs to look
 things up:
 
-- Names and versions of public packages, to their registries and OSV.dev
+- Names and versions of public packages, to their registries
 - Versions of installed software, to their release sites, to date them
+- Only if you turn on the `vulnerabilities` lens: package names and
+  versions to OSV.dev
+- Only if you turn on the `aikido-malware` lens: a download of Aikido's
+  malware lists, whole
 
 It never sends:
 
-- Package names to Aikido (it downloads Aikido's malware lists whole)
+- Package names to Aikido
 - Anything about private-registry, git or local dependencies
 - Secret values, which it never stores, logs, shows or puts in prompts
 
@@ -132,6 +140,7 @@ It never sends:
 - [The app](docs/app.md): menu bar, window and notifications
 - [AI agents](docs/ai-agents.md): prompts, skill and MCP server
 - [Writing lenses](docs/writing-lenses.md): how to add your own
+- [Translating](docs/translating.md): how to add a language
 - [SPEC.md](SPEC.md): architecture and roadmap
 
 ## Contributing
@@ -144,6 +153,19 @@ cargo test --workspace
 cargo clippy --all-targets --workspace
 cargo build && HOME=$(mktemp -d) target/debug/lenstica apply   # try changes without touching your real configs
 ```
+
+The window is a Svelte app in `ui/`. Its build output in `assets/ui/` is
+committed, so building Lenstica needs no Node; after changing `ui/`, rebuild
+it and commit both:
+
+```sh
+cd ui && pnpm install && pnpm check && pnpm build
+```
+
+Build pages from the components in `ui/src/lib/components/` (every button
+and field is one height, `h-control`), and put any text the app shows in
+`i18n/en.json` rather than in the code, so it can be translated: `t("key")`
+in the window, `t!("key")` in Rust.
 
 - Never print, log or store a secret value, even in tests.
 - Pin new dependencies to a release at least 7 days old.

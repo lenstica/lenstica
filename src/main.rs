@@ -11,6 +11,7 @@ mod duration;
 mod exec;
 mod files;
 mod http;
+mod i18n;
 mod lenses;
 mod managers;
 mod mcp;
@@ -90,9 +91,9 @@ enum Command {
         /// Only this lens
         #[arg(long)]
         lens: Option<String>,
-        /// Only this category: malware, vulnerability, secret, cooldown, deprecated, settings, agent, telemetry
+        /// Only this category: agents, packages, software, secrets, malware, network, privacy
         #[arg(long)]
-        category: Option<String>,
+        category: Option<lenstica_lens::Category>,
         /// Minimum severity: info, low, medium, high, critical (default: low)
         #[arg(long)]
         severity: Option<String>,
@@ -148,9 +149,9 @@ enum Command {
     },
     /// Run the menu bar / system tray app
     Tray,
-    /// Open the Lenstica window: findings, details and settings
+    /// Open the Lenstica window: every category's lenses and findings, and settings
     Window {
-        /// Page to open on: overview, findings, lenses or settings
+        /// Page to open on: overview, a category (agents, packages, software, secrets, malware, network, privacy) or settings; settings/<section> (general, notifications, managers, projects, checks, agents) opens one section
         page: Option<String>,
     },
     /// Start the monitor automatically at login
@@ -364,7 +365,7 @@ fn run(command: Command) -> Result<ExitCode> {
             let mut list: Vec<&Finding> = lenses::live_results(&cfg, &results)
                 .filter(|r| lens.as_ref().is_none_or(|c| &r.id == c))
                 .flat_map(|r| &r.findings)
-                .filter(|f| category.as_ref().is_none_or(|c| &f.category == c))
+                .filter(|f| category.is_none_or(|c| f.category == c))
                 .filter(|f| f.severity >= min)
                 .collect();
             list.sort_by(|a, b| lenses::by_severity(a, b));
@@ -471,7 +472,7 @@ fn run(command: Command) -> Result<ExitCode> {
             if key.is_some() && list.is_empty() {
                 bail!("no current finding with that key; `lenstica findings --json` lists them");
             }
-            print!("{}", prompt::for_findings(&list));
+            print!("{}", prompt::for_findings(&cfg, &list));
             Ok(ExitCode::SUCCESS)
         }
         Command::Mcp { setup: true } => {
@@ -487,10 +488,7 @@ fn run(command: Command) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::TestNotification => {
-            notify::send(
-                "Lenstica",
-                "Test notification. New findings will appear like this.",
-            )?;
+            notify::send(&i18n::t!("notify.title"), &i18n::t!("notify.test"))?;
             // The framework delivers asynchronously; give it a moment before exiting.
             std::thread::sleep(std::time::Duration::from_secs(2));
             let settings = if cfg!(target_os = "macos") {
@@ -585,8 +583,9 @@ fn tray() -> Result<ExitCode> {
 #[cfg(feature = "tray")]
 fn window(page: Option<String>) -> Result<ExitCode> {
     let page = page.unwrap_or_else(|| "overview".to_string());
-    if !gui::PAGES.contains(&page.as_str()) {
-        bail!("unknown page `{page}` (pages: {})", gui::PAGES.join(", "));
+    // `settings/projects` opens one section of Settings.
+    if !gui::pages().contains(&page.split_once('/').map_or(page.as_str(), |(p, _)| p)) {
+        bail!("unknown page `{page}` (pages: {})", gui::pages().join(", "));
     }
     // A second launch hands over to the running app, which opens its window.
     gui::run(Some(page))?;
@@ -790,11 +789,9 @@ fn print_lenses(cfg: &Config) {
     let s = Style::detect();
     let results = lenses::store::load();
     for r in lenses::registry(cfg) {
-        let state = if lenses::enabled(cfg, &r) {
-            s.green("on ")
-        } else {
-            s.dim("off")
-        };
+        let on = lenses::enabled(cfg, &r);
+        let state = if on { s.green("on ") } else { s.dim("off") };
+        let categories: Vec<&str> = r.lens.categories().iter().map(|c| c.title()).collect();
         let every = lenses::interval(cfg, &r).as_secs() / 60;
         let last = results
             .get(r.id())
@@ -803,16 +800,20 @@ fn print_lenses(cfg: &Config) {
             "{state} {}  {}",
             s.bold(&format!("{:<18}", r.id())),
             s.dim(&format!(
-                "{} · every {every} min · {last}",
+                "{} · {} · every {every} min · {last}",
+                categories.join(", "),
                 r.origin.label()
             ))
         );
         println!("    {}", r.lens.description());
+        if let Some(third) = r.lens.third_party() {
+            println!("    {}", s.dim(&format!("Third party: {third}")));
+        }
     }
     println!();
     println!(
         "{}",
-        s.dim("Turn one off with `[lenses.<id>] enabled = false`; add tools under `[[external]]` (see the settings file).")
+        s.dim("Turn one on or off with `[lenses.<id>] enabled = true` or `false`; add tools under `[[external]]` (see the settings file).")
     );
 }
 

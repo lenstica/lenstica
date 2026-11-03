@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Location, Report, Severity, topic};
 use serde_json::Value;
 
 use super::{Group, Origin, Registered};
@@ -28,6 +28,11 @@ pub fn from_config(cfg: &Config) -> Vec<Registered> {
             lens: Arc::new(Tool {
                 title: e.title.clone().unwrap_or_else(|| e.id.clone()),
                 description: format!("External tool: {}", e.command.join(" ")),
+                categories: if e.categories.is_empty() {
+                    e.format.default_categories().to_vec()
+                } else {
+                    e.categories.clone()
+                },
                 spec: e.clone(),
             }),
             origin: Origin::External,
@@ -40,6 +45,7 @@ struct Tool {
     spec: External,
     title: String,
     description: String,
+    categories: Vec<Category>,
 }
 
 impl Tool {
@@ -76,6 +82,9 @@ impl Lens for Tool {
     }
     fn description(&self) -> &str {
         &self.description
+    }
+    fn categories(&self) -> &[Category] {
+        &self.categories
     }
     fn default_interval(&self) -> Duration {
         Duration::from_secs(self.spec.interval_minutes.unwrap_or(120).saturating_mul(60))
@@ -174,9 +183,9 @@ fn gitleaks(out: &str, root: Option<&Path>) -> Result<Report> {
             Finding::new(
                 format!("{}|{}|{}", s(i, "RuleID"), loc.label, line.unwrap_or(0)),
                 Severity::High,
-                "secret",
+                Category::Secrets,
                 format!("{} in {}{}", s(i, "Description"), loc.label, line.map(|l| format!(":{l}")).unwrap_or_default()),
-            )
+            ).topic(topic::LEAKED)
             .remedy("Rotate the credential, then remove it from the file (and from git history if it was committed).")
             .at(loc)
         })
@@ -230,12 +239,17 @@ fn osv_scanner(out: &str, root: Option<&Path>) -> Result<Report> {
                     ),
                     if malicious { Severity::Critical } else { worst },
                     if malicious {
-                        "malware"
+                        Category::Malware
                     } else {
-                        "vulnerability"
+                        Category::Packages
                     },
                     format!("{name} {version}: {} advisories", vulns.len()),
                 )
+                .topic(if malicious {
+                    ""
+                } else {
+                    topic::VULNERABILITIES
+                })
                 .detail(
                     vulns
                         .iter()
@@ -274,13 +288,14 @@ fn trufflehog(out: &str, root: Option<&Path>) -> Result<Report> {
                 } else {
                     Severity::High
                 },
-                "secret",
+                Category::Secrets,
                 format!(
                     "{}{detector} credential in {}",
                     if verified { "Live " } else { "" },
                     loc.label
                 ),
             )
+            .topic(topic::LEAKED)
             .detail(if verified {
                 "trufflehog confirmed it still works."
             } else {
@@ -325,14 +340,16 @@ mod tests {
             "vulnerabilities":[{"id":"MAL-2025-9","summary":"Malicious code"}]}]}]}"#;
         let r = parse(ExternalFormat::OsvScanner, osv, None).unwrap();
         assert_eq!(
-            (r.findings[0].category.as_str(), r.findings[0].severity),
-            ("malware", Severity::Critical)
+            (r.findings[0].category, r.findings[0].severity),
+            (Category::Malware, Severity::Critical)
         );
 
+        // An older report names a category from before there were categories.
         let own = r#"{"summary":"ok","findings":[{"key":"k","severity":"low","category":"settings","title":"t"}]}"#;
+        let f = &parse(ExternalFormat::Lenstica, own, None).unwrap().findings[0];
         assert_eq!(
-            parse(ExternalFormat::Lenstica, own, None).unwrap().findings[0].severity,
-            Severity::Low
+            (f.severity, f.category),
+            (Severity::Low, Category::Packages)
         );
     }
 }

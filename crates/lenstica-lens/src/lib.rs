@@ -15,12 +15,14 @@
 //! - **An existing scanner** (gitleaks, osv-scanner, trufflehog): declare it
 //!   under `[[external]]` with its own `format`, and Lenstica translates.
 //!
-//! Findings must never carry secret values: name the file, the setting and the
-//! kind of credential, not its contents.
+//! Every lens registers with one or more [`Category`]s, which organise the
+//! window and the menu bar menu. Findings must never carry secret values: name
+//! the file, the setting and the kind of credential, not its contents.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::str::FromStr;
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
@@ -54,6 +56,157 @@ impl Severity {
             Severity::High => "high",
             Severity::Critical => "critical",
         }
+    }
+}
+
+/// What a lens looks at. The window's sidebar and the menu bar menu are
+/// organised by category; every lens registers with one or more
+/// ([`Lens::categories`]), and every finding names one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Category {
+    // The aliases are the names findings used before there were categories.
+    #[serde(alias = "agent")]
+    Agents,
+    #[serde(
+        alias = "cooldown",
+        alias = "vulnerability",
+        alias = "deprecated",
+        alias = "settings"
+    )]
+    Packages,
+    Software,
+    #[serde(alias = "secret")]
+    Secrets,
+    Malware,
+    Network,
+    #[serde(alias = "telemetry")]
+    Privacy,
+}
+
+/// Well-known topics: the kinds of problem within a category, offered as
+/// filters in the window ([`Category::topics`]). A lens may use others.
+pub mod topic {
+    pub const PROMPT_INJECTION: &str = "prompt-injection";
+    pub const HIDDEN_TEXT: &str = "hidden-text";
+    pub const PERMISSIONS: &str = "permissions";
+    /// Agent instructions or settings that break rules you set (no lens reports it yet).
+    pub const RULES_VIOLATIONS: &str = "rules-violations";
+    pub const MCP: &str = "mcp";
+    pub const COOLDOWN: &str = "cooldown";
+    pub const INSTALL_SCRIPTS: &str = "install-scripts";
+    pub const VULNERABILITIES: &str = "vulnerabilities";
+    pub const DEPRECATED: &str = "deprecated";
+    pub const TOO_NEW: &str = "too-new";
+    /// Installed software far behind its current release (no lens reports it yet).
+    pub const OUTDATED: &str = "outdated";
+    pub const AUTO_UPDATES: &str = "auto-updates";
+    pub const EXPOSED: &str = "exposed";
+    pub const LEAKED: &str = "leaked";
+    pub const TELEMETRY: &str = "telemetry";
+}
+
+impl Category {
+    /// Every category, in display order.
+    pub const ALL: [Category; 7] = [
+        Category::Agents,
+        Category::Packages,
+        Category::Software,
+        Category::Secrets,
+        Category::Malware,
+        Category::Network,
+        Category::Privacy,
+    ];
+
+    /// The id used in settings, reports and `--category`: `agents`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Category::Agents => "agents",
+            Category::Packages => "packages",
+            Category::Software => "software",
+            Category::Secrets => "secrets",
+            Category::Malware => "malware",
+            Category::Network => "network",
+            Category::Privacy => "privacy",
+        }
+    }
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Category::Agents => "AI agents",
+            Category::Packages => "Packages",
+            Category::Software => "Software",
+            Category::Secrets => "Secrets",
+            Category::Malware => "Malware",
+            Category::Network => "Network",
+            Category::Privacy => "Privacy",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Category::Agents => {
+                "The instructions, skills, hooks and MCP servers your coding agents load, and the permissions they run with."
+            }
+            Category::Packages => {
+                "Your dependencies and the package managers that install them: the cooldown, install scripts, known vulnerabilities and deprecations."
+            }
+            Category::Software => {
+                "Software installed on this machine and how it updates: tools and apps newer than the cooldown, and automatic updates."
+            }
+            Category::Secrets => {
+                "Credentials a malicious package running as you could read on disk, and credentials leaked into code."
+            }
+            Category::Malware => {
+                "Known malicious packages and releases, and protection against installing them."
+            }
+            Category::Network => {
+                "Connections and services on this machine that others could reach or listen to."
+            }
+            Category::Privacy => "Packages and tools that report on you: telemetry and tracking.",
+        }
+    }
+
+    /// The well-known topics within this category, as (id, title), in order.
+    pub fn topics(self) -> &'static [(&'static str, &'static str)] {
+        use topic::*;
+        match self {
+            Category::Agents => &[
+                (PROMPT_INJECTION, "Prompt injection"),
+                (HIDDEN_TEXT, "Hidden text"),
+                (PERMISSIONS, "Elevated permissions"),
+                (RULES_VIOLATIONS, "Rules violations"),
+                (MCP, "MCP servers"),
+            ],
+            Category::Packages => &[
+                (COOLDOWN, "Cooldown"),
+                (INSTALL_SCRIPTS, "Install scripts"),
+                (VULNERABILITIES, "Vulnerabilities"),
+                (DEPRECATED, "Deprecated"),
+            ],
+            Category::Software => &[
+                (TOO_NEW, "Too new"),
+                (OUTDATED, "Outdated"),
+                (AUTO_UPDATES, "Auto updates"),
+            ],
+            Category::Secrets => &[(EXPOSED, "Exposed"), (LEAKED, "Leaked")],
+            Category::Privacy => &[(TELEMETRY, "Telemetry")],
+            Category::Malware | Category::Network => &[],
+        }
+    }
+}
+
+/// An id or an older name: `agents`, `secret`.
+impl FromStr for Category {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, String> {
+        serde_json::from_value(serde_json::Value::String(s.trim().to_ascii_lowercase())).map_err(
+            |_| {
+                let ids: Vec<&str> = Category::ALL.iter().map(|c| c.id()).collect();
+                format!("unknown category `{s}` (one of {})", ids.join(", "))
+            },
+        )
     }
 }
 
@@ -93,9 +246,11 @@ pub struct Finding {
     /// a value that changed) and nothing that changes on its own (an age).
     pub key: String,
     pub severity: Severity,
-    /// Grouping in the UI: `malware`, `vulnerability`, `secret`, `lenstica`,
-    /// `deprecated`, `settings`, or anything a lens needs.
-    pub category: String,
+    pub category: Category,
+    /// The kind of problem within the category: one of [`Category::topics`]
+    /// when one fits (`cooldown`, `prompt-injection`), or empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub topic: String,
     pub title: String,
     #[serde(default)]
     pub detail: String,
@@ -119,13 +274,14 @@ impl Finding {
     pub fn new(
         key: impl Into<String>,
         severity: Severity,
-        category: impl Into<String>,
+        category: Category,
         title: impl Into<String>,
     ) -> Self {
         Self {
             key: key.into(),
             severity,
-            category: category.into(),
+            category,
+            topic: String::new(),
             title: title.into(),
             detail: String::new(),
             locations: Vec::new(),
@@ -134,6 +290,11 @@ impl Finding {
             fixable: false,
             lens: String::new(),
         }
+    }
+
+    pub fn topic(mut self, topic: impl Into<String>) -> Self {
+        self.topic = topic.into();
+        self
     }
 
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
@@ -343,6 +504,15 @@ pub trait Lens: Send + Sync {
     fn id(&self) -> &str;
     fn title(&self) -> &str;
     fn description(&self) -> &str;
+    /// The categories this lens appears under, the main one first; at least one.
+    fn categories(&self) -> &[Category];
+    /// What the lens relies on outside Lenstica, in one sentence for the user:
+    /// a service it sends data to, or a tool it runs or recommends ("Sends the
+    /// names and versions of your packages to OSV.dev."). A lens with one is
+    /// off until the user turns it on.
+    fn third_party(&self) -> Option<&str> {
+        None
+    }
     fn default_interval(&self) -> Duration {
         Duration::from_secs(30 * 60)
     }
@@ -421,5 +591,22 @@ mod tests {
             Some(std::path::Path::new("/home/u/x/.env"))
         );
         assert!(report.passing.is_empty() && report.actions.is_empty());
+        assert_eq!(report.findings[0].category, Category::Secrets);
+    }
+
+    #[test]
+    fn categories_read_ids_and_older_names() {
+        for c in Category::ALL {
+            assert_eq!(c.id().parse::<Category>(), Ok(c));
+            assert_eq!(serde_json::to_value(c).unwrap(), c.id());
+        }
+        assert_eq!("vulnerability".parse(), Ok(Category::Packages));
+        assert_eq!("Agent".parse(), Ok(Category::Agents));
+        assert!(
+            "weather"
+                .parse::<Category>()
+                .unwrap_err()
+                .contains("agents, packages")
+        );
     }
 }

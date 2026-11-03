@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use super::{AppState, Request};
 use crate::autostart::{self, Kind};
 use crate::config::{self, Config};
+use crate::i18n::t;
 use crate::system;
 
 /// The window's state, returned directly so the first paint never depends on an event.
@@ -37,6 +38,8 @@ pub async fn list_repos() -> Result<Value, String> {
                     "path": r.path,
                     "label": crate::paths::tilde(&r.path),
                     "worktreeOf": r.worktree_of.as_deref().map(crate::paths::tilde),
+                    // The main checkout's path, so findings in a worktree count for its project.
+                    "mainPath": r.worktree_of.as_deref().unwrap_or(&r.path),
                     "excluded": excluded,
                     // Excluded through a parent folder or the main checkout, not by itself.
                     "inherited": excluded && !exclude.paths.contains(&r.path),
@@ -44,6 +47,66 @@ pub async fn list_repos() -> Result<Value, String> {
             })
             .collect(),
     ))
+}
+
+/// What prompt templates being edited in Settings would write: for one
+/// finding and for several, from the current alerts (samples when there are
+/// fewer than two). An empty template means Lenstica's own.
+#[tauri::command]
+pub fn preview_prompt(
+    app: AppHandle,
+    finding: String,
+    findings: String,
+    item: String,
+) -> Result<Value, String> {
+    use crate::prompt::{self, Templates};
+    let or = |custom: &str, default: &'static str| {
+        if custom.trim().is_empty() {
+            default.to_string()
+        } else {
+            custom.to_string()
+        }
+    };
+    let (finding, findings, item) = (
+        or(&finding, prompt::DEFAULT_FINDING),
+        or(&findings, prompt::DEFAULT_FINDINGS),
+        or(&item, prompt::DEFAULT_ITEM),
+    );
+    let t = Templates {
+        finding: &finding,
+        findings: &findings,
+        item: &item,
+    };
+    t.check().map_err(|e| format!("{e:#}"))?;
+    let cfg = Config::load().unwrap_or_default();
+    let results = app.state::<AppState>().lock().results.clone();
+    let alerts = prompt::collect(&cfg, &results, &[]);
+    let samples = prompt::samples();
+    let list: Vec<(&lenstica_lens::Finding, &str)> = if alerts.len() >= 2 {
+        alerts.into_iter().take(3).collect()
+    } else {
+        samples.iter().map(|(f, title)| (f, *title)).collect()
+    };
+    Ok(serde_json::json!({
+        "one": prompt::write_one(&t, list[0].0, list[0].1),
+        "many": prompt::write_many(&t, &list),
+        "real": list[0].0.key != samples[0].0.key,
+    }))
+}
+
+/// A finding to write a prompt for; no `key` means all of the lens's alerts.
+#[derive(serde::Deserialize)]
+pub struct PromptItem {
+    lens: String,
+    key: Option<String>,
+}
+
+/// The prompt Copy Prompt for AI Agent would copy, to show before copying.
+#[tauri::command]
+pub fn prompt_text(app: AppHandle, items: Vec<PromptItem>) -> Result<Value, String> {
+    let items: Vec<(String, Option<String>)> = items.into_iter().map(|i| (i.lens, i.key)).collect();
+    let (text, count) = super::prompt_text(&app, &items).map_err(|e| format!("{e:#}"))?;
+    Ok(serde_json::json!({ "text": text, "count": count }))
 }
 
 #[tauri::command]
@@ -86,10 +149,24 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
         "ready" | "refresh" => {
             let _ = app.emit("state", super::state(app));
         }
-        "run" => match msg.get("lens").and_then(Value::as_str) {
-            Some(id) => state.send(Request::Run(vec![id.to_string()], false)),
-            None => state.send(Request::CheckAll),
-        },
+        // One lens, several (a category's), or every enabled lens.
+        "run" => {
+            let ids: Vec<String> = match (msg.get("lens"), msg.get("lenses")) {
+                (Some(id), _) => vec![id.as_str().context("`lens` is text")?.to_string()],
+                (None, Some(list)) => list
+                    .as_array()
+                    .context("`lenses` is a list")?
+                    .iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect(),
+                (None, None) => Vec::new(),
+            };
+            if ids.is_empty() {
+                state.send(Request::CheckAll);
+            } else {
+                state.send(Request::Run(ids, false));
+            }
+        }
         "fix" => state.send(Request::Fix {
             lens: str_field(msg, "lens")?.to_string(),
             key: str_field(msg, "key")?.to_string(),
@@ -107,7 +184,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
         "ignorePackage" => {
             let entry = str_field(msg, "entry")?;
             config::add_to_list(&["audit", "ignore"], entry)?;
-            super::toast(app, format!("Added {entry} to audit.ignore"), true);
+            super::toast(app, t!("toast.ignoredPackage", entry = entry), true);
             state.send(Request::Run(
                 vec![str_field(msg, "lens")?.to_string()],
                 true,
@@ -116,7 +193,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
         "ignoreAdvisory" => {
             let id = str_field(msg, "id")?;
             config::add_to_list(&["lenses", "vulnerabilities", "ignore_advisories"], id)?;
-            super::toast(app, format!("Ignoring advisory {id}"), true);
+            super::toast(app, t!("toast.ignoredAdvisory", id = id), true);
             state.send(Request::Run(vec!["vulnerabilities".to_string()], true));
         }
         "setting" => {
@@ -136,7 +213,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
                 &keys,
                 toml_value(msg.get("value").context("missing `value`")?)?,
             )?;
-            super::toast(app, format!("Saved {}", path.join(".")), true);
+            super::toast(app, t!("toast.saved", setting = path.join(".")), true);
             super::refresh(app);
         }
         "toggleLens" => {
@@ -160,10 +237,11 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             }
             super::toast(
                 app,
-                format!(
-                    "Lenstica will {} {id}",
-                    if on { "manage" } else { "leave alone" }
-                ),
+                if on {
+                    t!("toast.manage", name = id)
+                } else {
+                    t!("toast.leaveAlone", name = id)
+                },
                 true,
             );
             super::refresh(app);
@@ -174,7 +252,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             let raw = path.to_string_lossy().into_owned();
             if msg.get("excluded").and_then(Value::as_bool) == Some(true) {
                 config::add_to_list(&["scan", "exclude"], &shown)?;
-                super::toast(app, format!("Leaving out {shown}"), true);
+                super::toast(app, t!("toast.leavingOut", path = shown), true);
             } else {
                 // The entry may be written either way; remove both spellings.
                 let a = config::remove_from_list(&["scan", "exclude"], &shown)?;
@@ -184,7 +262,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
                         "{shown} is left out through a parent folder or a name in scan.exclude; edit that entry instead"
                     );
                 }
-                super::toast(app, format!("Searching {shown} again"), true);
+                super::toast(app, t!("toast.searchingAgain", path = shown), true);
             }
             super::refresh(app);
         }
@@ -214,16 +292,13 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             super::copy_prompt(app, &items)?;
         }
         "testNotification" => {
-            crate::notify::send(
-                "Lenstica",
-                "Test notification. New findings will appear like this.",
-            )?;
+            crate::notify::send(&t!("notify.title"), &t!("notify.test"))?;
         }
         "installSkill" => {
             let path = crate::agent::install_skill(None)?;
             super::toast(
                 app,
-                format!("Installed the skill at {}", crate::paths::tilde(&path)),
+                t!("toast.installedSkill", path = crate::paths::tilde(&path)),
                 true,
             );
         }
@@ -232,7 +307,11 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             app.clipboard()
                 .write_text(str_field(msg, "text")?.to_string())
                 .map_err(|e| anyhow::anyhow!("cannot copy: {e}"))?;
-            super::toast(app, "Copied", true);
+            let said = msg
+                .get("toast")
+                .and_then(Value::as_str)
+                .map_or_else(|| t!("toast.copied"), String::from);
+            super::toast(app, said, true);
         }
         other => bail!("unknown action `{other}`"),
     }

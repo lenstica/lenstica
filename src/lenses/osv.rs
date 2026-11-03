@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Context as _, Result};
-use lenstica_lens::{Context, Finding, Lens, Package, Report, Severity, Source};
+use lenstica_lens::{Category, Context, Finding, Lens, Package, Report, Severity, Source, topic};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -393,7 +393,7 @@ fn finding(
                 pkg.version
             ),
             Severity::Critical,
-            "malware",
+            Category::Malware,
             format!(
                 "Malicious package: {} {} ({})",
                 pkg.name,
@@ -421,7 +421,7 @@ fn finding(
                 ids.join(",")
             ),
             worst,
-            "vulnerability",
+            Category::Packages,
             format!(
                 "{} {}: {} known {} ({} worst)",
                 pkg.name,
@@ -435,6 +435,7 @@ fn finding(
                 worst.label()
             ),
         )
+        .topic(topic::VULNERABILITIES)
         .remedy(remedy)
     };
     f.detail = advisories
@@ -460,6 +461,14 @@ impl Lens for Vulnerabilities {
     }
     fn description(&self) -> &str {
         "Locked and installed packages with known vulnerabilities or known malicious releases, from OSV.dev (GitHub, PyPI, RustSec and OpenSSF malicious-packages advisories)."
+    }
+    fn categories(&self) -> &[Category] {
+        &[Category::Packages, Category::Malware]
+    }
+    fn third_party(&self) -> Option<&str> {
+        Some(
+            "Sends the names and versions of your locked and installed packages to OSV.dev, the open vulnerability database run by Google.",
+        )
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
@@ -513,11 +522,14 @@ impl Lens for Vulnerabilities {
             let fix = fixed_in(&advisories, pkg);
             findings.push(finding(pkg, &advisories, &by_package[pkg], fix));
         }
-        let malware = findings.iter().filter(|f| f.category == "malware").count();
+        let malware = findings
+            .iter()
+            .filter(|f| f.category == Category::Malware)
+            .count();
         let count = |s: Severity| {
             findings
                 .iter()
-                .filter(|f| f.category == "vulnerability" && f.severity == s)
+                .filter(|f| f.category == Category::Packages && f.severity == s)
                 .count()
         };
         let summary = format!(

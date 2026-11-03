@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Location, Report, Severity, topic};
 
 use crate::config::Config;
 use crate::exec;
@@ -118,6 +118,9 @@ impl Lens for HomebrewUpdates {
     fn description(&self) -> &str {
         "Whether Homebrew fetches the newest formulae before every install. Homebrew has no minimum-age setting; turning auto-update off means new versions arrive only when you run brew update."
     }
+    fn categories(&self) -> &[Category] {
+        &[Category::Software]
+    }
 
     fn run(&self, cx: &Context) -> Result<Report> {
         let cfg = Config::load()?;
@@ -188,13 +191,13 @@ impl Lens for HomebrewUpdates {
         let finding = Finding::new(
             KEY,
             Severity::Low,
-            "settings",
+            Category::Software,
             if in_shell.is_empty() {
                 "Homebrew updates itself before every install"
             } else {
                 "Homebrew auto-update is off only in your shell"
             },
-        )
+        ).topic(topic::AUTO_UPDATES)
         .detail(detail)
         .remedy(format!(
             "Click to set {VAR}=1 in {}, or switch on homebrew.no_auto_update in Settings to keep it set. \

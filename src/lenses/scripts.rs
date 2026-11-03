@@ -6,7 +6,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Location, Report, Severity, topic};
 
 use crate::config::Config;
 use crate::exec;
@@ -82,6 +82,9 @@ impl Lens for InstallScripts {
     fn description(&self) -> &str {
         "Whether installing a dependency can run its code (preinstall/postinstall scripts), the way supply-chain worms steal developer credentials."
     }
+    fn categories(&self) -> &[Category] {
+        &[Category::Packages]
+    }
 
     fn run(&self, cx: &Context) -> Result<Report> {
         let cfg = Config::load()?;
@@ -147,7 +150,7 @@ impl Lens for InstallScripts {
         let mut findings: Vec<Finding> = open
             .iter()
             .map(|o| {
-                Finding::new(format!("open|{}", o.id), Severity::Low, "settings", format!("{} runs dependencies' install scripts", o.name))
+                Finding::new(format!("open|{}", o.id), Severity::Low, Category::Packages, format!("{} runs dependencies' install scripts", o.name)).topic(topic::INSTALL_SCRIPTS)
                     .detail(format!(
                         "Installing a package lets it run code as you, before you ever import it. That is how the \
                          Shai-Hulud worm stole npm, GitHub and cloud credentials. Setting {} in {} stops it.{}",
@@ -166,14 +169,14 @@ impl Lens for InstallScripts {
             .collect();
         if let Some(v) = old_pnpm {
             findings.push(
-                Finding::new("old-pnpm", Severity::Low, "settings", format!("pnpm {v} runs dependencies' install scripts"))
+                Finding::new("old-pnpm", Severity::Low, Category::Packages, format!("pnpm {v} runs dependencies' install scripts")).topic(topic::INSTALL_SCRIPTS)
                     .detail("pnpm before 10 runs every dependency's install scripts; pnpm 10 runs them only for packages allowed by name.")
                     .remedy("Upgrade pnpm to 10 or later."),
             );
         }
         if exec::find("uv", search).is_some() || exec::find("pip3", search).is_some() {
             findings.push(
-                Finding::new("sdist-builds", Severity::Info, "settings", "pip and uv run build code for source-only packages")
+                Finding::new("sdist-builds", Severity::Info, Category::Packages, "pip and uv run build code for source-only packages").topic(topic::INSTALL_SCRIPTS)
                     .detail("Installing a package that ships only a source distribution runs its build backend (setup.py) as you.")
                     .remedy("For projects that should never build from source: uv `no-build = true`, pip `--only-binary :all:`."),
             );

@@ -1,11 +1,12 @@
-//! The tray icon and its menu, built from findings alone, so any lens
-//! (built-in, plugin crate or external tool) shows up without changes here.
+//! The tray icon and its menu: one submenu per category, built from the
+//! lenses' categories and their findings alone, so any lens (built-in, plugin
+//! crate or external tool) shows up without changes here.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 use anyhow::Result;
-use lenstica_lens::{Finding, Severity};
+use lenstica_lens::{Category, Finding, Severity};
 use tauri::image::Image;
 use tauri::menu::{
     IconMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu,
@@ -15,12 +16,13 @@ use tauri::{AppHandle, Manager, Wry};
 
 use super::{AppState, Request};
 use crate::config::Config;
+use crate::i18n::{self, t};
 use crate::icon::{self, Glyph, MenuIcon};
 use crate::lenses::{self, store::RunResult};
 use crate::system;
 
 const TRAY_ID: &str = "lenstica";
-/// Findings listed per lens submenu; the window shows them all.
+/// Findings listed per category submenu; the window shows them all.
 const MENU_LIMIT: usize = 25;
 
 #[derive(Clone)]
@@ -29,15 +31,14 @@ pub enum Click {
         lens: String,
         key: String,
     },
-    /// Copy a prompt for an AI agent: one finding, or every alert of a lens.
-    CopyPrompt {
-        lens: String,
-        key: Option<String>,
-    },
+    /// Copy a prompt for an AI agent covering these (lens, finding key) pairs.
+    CopyPrompt(Vec<(String, Option<String>)>),
     ShowFinding {
+        category: Category,
         lens: String,
         key: String,
     },
+    ShowCategory(Category),
     OpenWindow,
     OpenSettings,
     OpenFile(PathBuf),
@@ -57,7 +58,7 @@ pub fn create(app: &AppHandle) -> Result<()> {
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(image(Glyph::Checking))
         .icon_as_template(Glyph::Checking.is_template())
-        .tooltip("Lenstica")
+        .tooltip(t!("notify.title"))
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(on_click)
@@ -74,9 +75,17 @@ fn on_click(app: &AppHandle, event: MenuEvent) {
             state.send(Request::Fix { lens, key });
             Ok(())
         }
-        Some(Click::CopyPrompt { lens, key }) => super::copy_prompt(app, &[(lens, key)]),
-        Some(Click::ShowFinding { lens, key }) => {
-            super::show_finding(app, &lens, &key);
+        Some(Click::CopyPrompt(items)) => super::copy_prompt(app, &items),
+        Some(Click::ShowFinding {
+            category,
+            lens,
+            key,
+        }) => {
+            super::show_finding(app, category, &lens, &key);
+            Ok(())
+        }
+        Some(Click::ShowCategory(category)) => {
+            super::show_page(app, category.id());
             Ok(())
         }
         Some(Click::OpenWindow) => {
@@ -99,7 +108,7 @@ fn on_click(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-/// How deep an item sits, from its id: `lens:summary` 1, `lens:f0:fix` 2.
+/// How deep an item sits, from its id: `packages:l0` 1, `packages:f0:fix` 2.
 fn depth(id: &str) -> usize {
     match id.matches(':').count() {
         0 => 0,
@@ -116,9 +125,14 @@ fn truncate(text: &str, max: usize) -> String {
     }
 }
 
-fn capitalised(s: Severity) -> String {
-    let label = s.label();
-    label[..1].to_uppercase() + &label[1..]
+/// A severity's name in the app's language: "Medium".
+fn severity_name(s: Severity) -> String {
+    t!(&format!("severity.{}", s.label()))
+}
+
+/// A category's name in the app's language.
+fn category_name(c: Category) -> String {
+    i18n::message_or(&format!("categories.{}.title", c.id()), c.title(), &[])
 }
 
 /// The file a finding points at, if it is one that can be opened.
@@ -235,7 +249,11 @@ impl Builder<'_> {
         )?;
         sub.append(&self.item(
             format!("{id}:about"),
-            &format!("{} · {lens_title}", capitalised(f.severity)),
+            &t!(
+                "menu.findingAbout",
+                severity = severity_name(f.severity),
+                lens = lens_title
+            ),
             false,
             None,
         )?)?;
@@ -254,26 +272,27 @@ impl Builder<'_> {
                 .unwrap_or_default();
             sub.append(&self.item(
                 format!("{id}:file"),
-                &format!("Open {}", truncate(&name, 40)),
+                &t!("menu.openFile", file = truncate(&name, 40)),
                 true,
                 Some(Click::OpenFile(path)),
             )?)?;
         }
         sub.append(&self.icon_item(
             format!("{id}:prompt"),
-            "Copy Prompt for AI Agent",
+            &t!("menu.copyPrompt"),
             MenuIcon::Copy,
             true,
-            Some(Click::CopyPrompt {
-                lens: f.lens.clone(),
-                key: Some(f.key.clone()),
-            }),
+            Some(Click::CopyPrompt(vec![(
+                f.lens.clone(),
+                Some(f.key.clone()),
+            )])),
         )?)?;
         sub.append(&self.item(
             format!("{id}:show"),
-            "Show in Lenstica",
+            &t!("menu.show"),
             true,
             Some(Click::ShowFinding {
+                category: f.category,
                 lens: f.lens.clone(),
                 key: f.key.clone(),
             }),
@@ -281,31 +300,62 @@ impl Builder<'_> {
         Ok(sub)
     }
 
-    fn lens(&mut self, cfg: &Config, r: &lenses::Registered) -> Result<Submenu<Wry>> {
-        let id = r.id().to_string();
-        let title = r.lens.title().to_string();
-        let result = self.results.get(&id);
-        let mut alerts: Vec<&Finding> = result
-            .into_iter()
-            .flat_map(|res| &res.findings)
-            .filter(|f| lenses::is_alert(cfg, f))
-            .collect();
-        alerts.sort_by(|a, b| lenses::by_severity(a, b));
-        let state = match result {
-            _ if self.running.contains(&id) => MenuIcon::Running,
+    /// A lens's state: running, never run, failed, or the worst of its alerts.
+    fn lens_state(&self, cfg: &Config, id: &str) -> MenuIcon {
+        let result = self.results.get(id);
+        if self.running.contains(id) {
+            return MenuIcon::Running;
+        }
+        match result {
             None => MenuIcon::NotRun,
             Some(res) if res.error.is_some() => MenuIcon::Failed,
-            Some(_) => match alerts.first() {
-                None => MenuIcon::Ok,
-                Some(worst) => MenuIcon::Problem(worst.severity),
-            },
-        };
-        let label = if alerts.is_empty() {
-            title.clone()
+            Some(res) => res
+                .findings
+                .iter()
+                .filter(|f| lenses::is_alert(cfg, f))
+                .map(|f| f.severity)
+                .max()
+                .map_or(MenuIcon::Ok, MenuIcon::Problem),
+        }
+    }
+
+    /// One category: its lenses' state, then its findings that need attention.
+    fn category(
+        &mut self,
+        cfg: &Config,
+        category: Category,
+        members: &[&lenses::Registered],
+    ) -> Result<Submenu<Wry>> {
+        let id = category.id();
+        let on: Vec<&lenses::Registered> = members
+            .iter()
+            .copied()
+            .filter(|r| lenses::enabled(cfg, r))
+            .collect();
+        let mut alerts: Vec<(&Finding, &str)> = on
+            .iter()
+            .filter_map(|r| self.results.get(r.id()))
+            .flat_map(|res| res.findings.iter().map(move |f| (f, res.title.as_str())))
+            .filter(|(f, _)| f.category == category && lenses::is_alert(cfg, f))
+            .collect();
+        alerts.sort_by(|a, b| lenses::by_severity(a.0, b.0));
+        let states: Vec<MenuIcon> = on.iter().map(|r| self.lens_state(cfg, r.id())).collect();
+        let state = if states.contains(&MenuIcon::Running) {
+            MenuIcon::Running
+        } else if let Some((worst, _)) = alerts.first() {
+            MenuIcon::Problem(worst.severity)
+        } else if states.contains(&MenuIcon::Failed) {
+            MenuIcon::Failed
+        } else if states.is_empty() || states.contains(&MenuIcon::NotRun) {
+            MenuIcon::NotRun
         } else {
-            format!("{title} ({})", alerts.len())
+            MenuIcon::Ok
         };
-        let summary = result.map_or_else(|| "Not run yet".to_string(), RunResult::status_text);
+        let name = category_name(category);
+        let label = match alerts.len() {
+            0 => name.clone(),
+            n => format!("{name} ({n})"),
+        };
         self.trace(0, &label, Some(state), None);
         let sub = Submenu::with_id_and_icon(
             self.app,
@@ -314,37 +364,61 @@ impl Builder<'_> {
             true,
             Some(menu_image(state)),
         )?;
-        sub.append(&self.item(
-            format!("{id}:summary"),
-            &truncate(&summary, 90),
-            false,
-            None,
-        )?)?;
+        let open = Click::ShowCategory(category);
+        for (i, r) in members.iter().enumerate() {
+            let (icon, status) = if lenses::enabled(cfg, r) {
+                let status = self.results.get(r.id()).map_or_else(
+                    || t!("menu.notRun"),
+                    |res| {
+                        res.error
+                            .as_ref()
+                            .map_or_else(|| res.summary.clone(), |e| t!("lens.failed", error = e))
+                    },
+                );
+                (self.lens_state(cfg, r.id()), status)
+            } else if r.lens.third_party().is_some() {
+                (MenuIcon::NotRun, t!("menu.offThirdParty"))
+            } else {
+                (MenuIcon::NotRun, t!("menu.off"))
+            };
+            let text = truncate(
+                &t!("menu.lensLine", lens = r.lens.title(), status = status),
+                90,
+            );
+            sub.append(&self.icon_item(
+                format!("{id}:l{i}"),
+                &text,
+                icon,
+                true,
+                Some(open.clone()),
+            )?)?;
+        }
         if !alerts.is_empty() {
             sub.append(&PredefinedMenuItem::separator(self.app)?)?;
         }
-        for (i, f) in alerts.iter().take(MENU_LIMIT).enumerate() {
-            sub.append(&self.finding(&format!("{id}:f{i}"), f, &title)?)?;
+        for (i, (f, title)) in alerts.iter().take(MENU_LIMIT).enumerate() {
+            sub.append(&self.finding(&format!("{id}:f{i}"), f, title)?)?;
         }
         sub.append(&PredefinedMenuItem::separator(self.app)?)?;
         if alerts.len() > 1 {
+            let items = alerts
+                .iter()
+                .map(|(f, _)| (f.lens.clone(), Some(f.key.clone())))
+                .collect();
             sub.append(&self.icon_item(
                 format!("{id}:prompt"),
-                &format!("Copy Prompt for All {}", alerts.len()),
+                &t!("menu.copyAll", count = alerts.len()),
                 MenuIcon::Copy,
                 true,
-                Some(Click::CopyPrompt {
-                    lens: id.clone(),
-                    key: None,
-                }),
+                Some(Click::CopyPrompt(items)),
             )?)?;
         }
         let more = if alerts.len() > MENU_LIMIT {
-            format!("Show All {} in Lenstica", alerts.len())
+            t!("menu.showAll", count = alerts.len())
         } else {
-            "Show in Lenstica".to_string()
+            t!("menu.openCategory", category = name)
         };
-        sub.append(&self.item(format!("{id}:open"), &more, true, Some(Click::OpenWindow))?)?;
+        sub.append(&self.item(format!("{id}:open"), &more, true, Some(open))?)?;
         Ok(sub)
     }
 
@@ -352,17 +426,10 @@ impl Builder<'_> {
         let app = self.app;
         let mut items: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
         let (headline, state) = match alerts.iter().max() {
-            _ if self.results.is_empty() => ("Checking…".to_string(), MenuIcon::Running),
-            None => (
-                format!("Nothing needs attention · {}-day cooldown", cfg.min_days),
-                MenuIcon::Ok,
-            ),
+            _ if self.results.is_empty() => (t!("menu.checking"), MenuIcon::Running),
+            None => (t!("menu.clear", days = cfg.min_days), MenuIcon::Ok),
             Some(worst) => (
-                format!(
-                    "{} need attention · {}-day cooldown",
-                    alerts.len(),
-                    cfg.min_days
-                ),
+                t!("menu.need", count = alerts.len(), days = cfg.min_days),
                 MenuIcon::Problem(*worst),
             ),
         };
@@ -374,29 +441,31 @@ impl Builder<'_> {
             None,
         )?));
         items.push(Box::new(PredefinedMenuItem::separator(app)?));
-        for r in lenses::registry(cfg)
-            .iter()
-            .filter(|r| lenses::enabled(cfg, r))
-        {
-            items.push(Box::new(self.lens(cfg, r)?));
+        let registry = lenses::registry(cfg);
+        for category in Category::ALL {
+            let members = lenses::in_category(&registry, category);
+            // A category no lens covers (yet) is left out.
+            if !members.is_empty() {
+                items.push(Box::new(self.category(cfg, category, &members)?));
+            }
         }
         items.push(Box::new(PredefinedMenuItem::separator(app)?));
         items.push(Box::new(self.shortcut(
             "window",
-            "Open Lenstica",
+            &t!("menu.openLenstica"),
             "CmdOrCtrl+O",
             Click::OpenWindow,
         )?));
         items.push(Box::new(self.shortcut(
             "settings",
-            "Settings",
+            &t!("menu.settings"),
             "CmdOrCtrl+,",
             Click::OpenSettings,
         )?));
         items.push(Box::new(PredefinedMenuItem::separator(app)?));
         items.push(Box::new(self.shortcut(
             "quit",
-            "Quit",
+            &t!("menu.quit"),
             "CmdOrCtrl+Q",
             Click::Quit,
         )?));
@@ -454,12 +523,10 @@ fn try_refresh(app: &AppHandle) -> Result<()> {
     };
     let critical = alerts.contains(&Severity::Critical);
     let tooltip = match alerts.len() {
-        0 if empty => "Lenstica: checking…".to_string(),
-        0 => "Lenstica: nothing needs attention".to_string(),
-        n => format!(
-            "Lenstica: {n} need attention{}",
-            if critical { " (critical)" } else { "" }
-        ),
+        0 if empty => t!("menu.tooltipChecking"),
+        0 => t!("menu.tooltipClear"),
+        n if critical => t!("menu.tooltipCritical", count = n),
+        n => t!("menu.tooltipNeed", count = n),
     };
     tray.set_menu(Some(menu))?;
     tray.set_icon_with_as_template(Some(image(glyph)), glyph.is_template())?;

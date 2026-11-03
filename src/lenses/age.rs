@@ -2,7 +2,7 @@
 
 use super::shared::plural;
 use anyhow::Result;
-use lenstica_lens::{Context, Finding, Lens, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Report, Severity, topic};
 
 use super::shared;
 use crate::audit::{self, Kind, registry::Cache};
@@ -20,6 +20,9 @@ impl Lens for PackageAge {
     }
     fn description(&self) -> &str {
         "Packages in your lockfiles and global installs that were published less than the cooldown ago, or were that young when their lockfile last changed."
+    }
+    fn categories(&self) -> &[Category] {
+        &[Category::Packages]
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
@@ -60,9 +63,9 @@ impl Lens for PackageAge {
                 let mut finding = Finding::new(
                     format!("{key}|{}|{}|{}", f.ecosystem.label(), f.name, f.version),
                     severity,
-                    "cooldown",
+                    Category::Packages,
                     title,
-                )
+                ).topic(topic::COOLDOWN)
                 .detail(format!(
                     "{} package published {} UTC. Found in {}.",
                     f.ecosystem.label(),

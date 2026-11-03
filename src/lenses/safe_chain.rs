@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Location, Report, Severity};
 
 use crate::exec;
 use crate::files;
@@ -86,6 +86,14 @@ impl Lens for SafeChain {
     fn description(&self) -> &str {
         "Whether Aikido Safe Chain is installed and loaded by your shells. It checks every npm, Yarn, pnpm, Bun, pip, uv and Poetry download against Aikido's malware lists and blocks a malicious package before it is installed, which Lenstica can only report afterwards."
     }
+    fn categories(&self) -> &[Category] {
+        &[Category::Malware]
+    }
+    fn third_party(&self) -> Option<&str> {
+        Some(
+            "Recommends installing Aikido Safe Chain, a tool by Aikido Security, and can run its `safe-chain setup` for you.",
+        )
+    }
     fn default_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(6 * 3600)
     }
@@ -97,7 +105,7 @@ impl Lens for SafeChain {
             let finding = Finding::new(
                 NOT_INSTALLED,
                 Severity::Info,
-                "settings",
+                Category::Malware,
                 "Aikido Safe Chain is not installed",
             )
             .detail(
@@ -149,7 +157,7 @@ impl Lens for SafeChain {
             let mut f = Finding::new(
                 NOT_SET_UP,
                 Severity::Low,
-                "settings",
+                Category::Malware,
                 "Safe Chain is installed but no shell loads it",
             )
             .detail(
@@ -171,7 +179,7 @@ impl Lens for SafeChain {
             let mut f = Finding::new(
                 format!("safe-chain|partial|{}", names.join(",")),
                 Severity::Info,
-                "settings",
+                Category::Malware,
                 format!("Safe Chain is not loaded in {}", names.join(", ")),
             )
             .remedy("Run `safe-chain setup` to add it to every shell, then open a new terminal.")

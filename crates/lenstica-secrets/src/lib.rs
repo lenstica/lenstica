@@ -15,7 +15,8 @@ use std::time::Duration;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use lenstica_lens::{
-    Context, Exclude, Finding, Lens, Location, Report, Result, Severity, home_dir, tilde,
+    Category, Context, Exclude, Finding, Lens, Location, Report, Result, Severity, home_dir, tilde,
+    topic,
 };
 use regex::Regex;
 use serde_json::Value;
@@ -34,6 +35,9 @@ impl Lens for Secrets {
         "Credentials stored in files a malicious package running as you could read: cloud keys and sign-in caches, \
          registry and GitHub tokens, SSH keys without a passphrase, secrets in shell startup files and history, and \
          .env and settings files in your projects and every worktree."
+    }
+    fn categories(&self) -> &[Category] {
+        &[Category::Secrets]
     }
     fn default_interval(&self) -> Duration {
         Duration::from_secs(60 * 60)
@@ -321,7 +325,7 @@ fn aws(home: &Path, out: &mut Out) {
     }
     if !long_lived.is_empty() {
         out.findings.push(
-            Finding::new(format!("aws-keys|{}", list(&long_lived, 50)), Severity::High, "secret", "Long-lived AWS access keys on disk")
+            Finding::new(format!("aws-keys|{}", list(&long_lived, 50)), Severity::High, Category::Secrets, "Long-lived AWS access keys on disk").topic(topic::EXPOSED)
                 .detail(format!(
                     "Profiles with permanent access keys (AKIA…) in {}: {}. They work from anywhere until someone rotates them.",
                     tilde(&path),
@@ -333,7 +337,7 @@ fn aws(home: &Path, out: &mut Out) {
     }
     if !temporary.is_empty() {
         out.findings.push(
-            Finding::new("aws-temporary", Severity::Low, "secret", format!("Temporary AWS credentials stored in {}", tilde(&path)))
+            Finding::new("aws-temporary", Severity::Low, Category::Secrets, format!("Temporary AWS credentials stored in {}", tilde(&path))).topic(topic::EXPOSED)
                 .detail(format!("Profiles: {}. They expire, but anything running as you can use them until then.", list(&temporary, 10)))
                 .remedy("Prefer `aws sso login` profiles or aws-vault over writing session keys into the credentials file.")
                 .at(at(&path)),
@@ -405,9 +409,10 @@ fn aws_sign_in(home: &Path, now: DateTime<Utc>, out: &mut Out) {
             Finding::new(
                 "aws-sign-in",
                 Severity::Info,
-                "secret",
+                Category::Secrets,
                 "Cached AWS role credentials on disk",
             )
+            .topic(topic::EXPOSED)
             .detail(format!(
                 "{roles} cached role {}. Anything running as you can use them until they expire.",
                 if roles == 1 {
@@ -425,7 +430,7 @@ fn aws_sign_in(home: &Path, now: DateTime<Utc>, out: &mut Out) {
     let latest = sessions.iter().map(|(e, _)| *e).max();
     let hours = latest.map(|e| (e - now).num_minutes() as f64 / 60.0);
     out.findings.push(
-        Finding::new("aws-sign-in", if renewable { Severity::Low } else { Severity::Info }, "secret", "Active AWS sign-in cached on disk")
+        Finding::new("aws-sign-in", if renewable { Severity::Low } else { Severity::Info }, Category::Secrets, "Active AWS sign-in cached on disk").topic(topic::EXPOSED)
             .detail(format!(
                 "{} active SSO {}{}{}, and {roles} cached role credentials. Anything running as you can mint credentials \
                  for every account and role this sign-in reaches until it expires{}.",
@@ -467,9 +472,9 @@ fn cargo_credentials(dir: &Path, out: &mut Out) {
             Finding::new(
                 format!("cargo-token|{name}|{}", list(&registries, 20)),
                 Severity::High,
-                "secret",
+                Category::Secrets,
                 format!("Cargo registry token stored in plain text in {}", tilde(&path)),
-            )
+            ).topic(topic::EXPOSED)
             .detail(format!(
                 "Registries: {}. Anyone with it can publish new versions of your crates, which is how a supply-chain worm spreads.",
                 list(&registries, 5)
@@ -515,7 +520,7 @@ fn npmrc(home: &Path, out: &mut Out) {
         return;
     }
     out.findings.push(
-        Finding::new(format!("npm-token|{}", list(&registries, 20)), Severity::High, "secret", format!("npm token stored in {}", tilde(&path)))
+        Finding::new(format!("npm-token|{}", list(&registries, 20)), Severity::High, Category::Secrets, format!("npm token stored in {}", tilde(&path))).topic(topic::EXPOSED)
             .detail(format!(
                 "Registries: {}. With a publish token, malware can push poisoned versions of your packages, which is how \
                  the Shai-Hulud worm spread.",
@@ -600,7 +605,8 @@ fn simple_token_files(home: &Path, out: &mut Out) {
         let Some(src) = read(&t.path) else { continue };
         if (t.holds_credential)(&src) {
             out.findings.push(
-                Finding::new(t.key, Severity::High, "secret", t.title)
+                Finding::new(t.key, Severity::High, Category::Secrets, t.title)
+                    .topic(topic::EXPOSED)
                     .remedy(t.remedy)
                     .at(at(&t.path)),
             );
@@ -641,7 +647,7 @@ fn docker(home: &Path, out: &mut Out) {
         return;
     }
     out.findings.push(
-        Finding::new(format!("docker-auth|{}", list(&inline, 20)), Severity::High, "secret", "Docker registry passwords stored in plain text")
+        Finding::new(format!("docker-auth|{}", list(&inline, 20)), Severity::High, Category::Secrets, "Docker registry passwords stored in plain text").topic(topic::EXPOSED)
             .detail(format!("Registries: {} (base64 user:password in config.json).", list(&inline, 5)))
             .remedy("Set `\"credsStore\": \"osxkeychain\"` (or desktop / wincred / pass), then `docker logout` and log in again.")
             .at(at(&path)),
@@ -682,7 +688,7 @@ fn kube(home: &Path, out: &mut Out) {
             continue;
         }
         out.findings.push(
-            Finding::new(format!("kube-static|{}", tilde(&path)), Severity::High, "secret", "Static Kubernetes credentials in kubeconfig")
+            Finding::new(format!("kube-static|{}", tilde(&path)), Severity::High, Category::Secrets, "Static Kubernetes credentials in kubeconfig").topic(topic::EXPOSED)
                 .detail(format!(
                     "{} stores {} directly.",
                     tilde(&path),
@@ -754,7 +760,7 @@ fn ssh(home: &Path, out: &mut Out) {
     }
     for path in &bare {
         out.findings.push(
-            Finding::new(format!("ssh-key|{}", tilde(path)), Severity::High, "secret", format!("SSH key without a passphrase: {}", tilde(path)))
+            Finding::new(format!("ssh-key|{}", tilde(path)), Severity::High, Category::Secrets, format!("SSH key without a passphrase: {}", tilde(path))).topic(topic::EXPOSED)
                 .detail("Anything running as you can copy it and use it anywhere until you remove it from every server and Git host.")
                 .remedy(format!(
                     "Add a passphrase (`ssh-keygen -p -f {}`) and keep it in the agent/keychain, or move to a key that cannot leave the machine: \
@@ -800,7 +806,7 @@ fn gcloud(home: &Path, out: &mut Out) {
         };
         match held {
             Some((severity, what)) => out.findings.push(
-                Finding::new("gcloud-adc", severity, "secret", "Google Cloud application-default credentials on disk")
+                Finding::new("gcloud-adc", severity, Category::Secrets, "Google Cloud application-default credentials on disk").topic(topic::EXPOSED)
                     .detail(format!("{} holds {what}.", tilde(&adc)))
                     .remedy("Prefer service-account impersonation and `gcloud auth application-default revoke` when not needed; never keep service-account keys on a laptop.")
                     .at(at(&adc)),
@@ -817,9 +823,10 @@ fn gcloud(home: &Path, out: &mut Out) {
             Finding::new(
                 "gcloud-db",
                 Severity::Medium,
-                "secret",
+                Category::Secrets,
                 "gcloud refresh tokens in credentials.db",
             )
+            .topic(topic::EXPOSED)
             .remedy("`gcloud auth revoke` accounts you no longer use.")
             .at(at(&db)),
         );
@@ -873,7 +880,7 @@ fn shell_startup(home: &Path, out: &mut Out) {
             continue;
         }
         out.findings.push(
-            Finding::new(format!("shell-env|{rel}|{}", list(&names, 30)), Severity::High, "secret", format!("Secrets in ~/{rel}"))
+            Finding::new(format!("shell-env|{rel}|{}", list(&names, 30)), Severity::High, Category::Secrets, format!("Secrets in ~/{rel}")).topic(topic::EXPOSED)
                 .detail(format!("{}. Every program you start, including package install scripts, inherits them.", list(&names, 8)))
                 .remedy("Move them into a secret manager and load them only for the command that needs them (`op run`, aws-vault, direnv with a keychain lookup), then rotate them.")
                 .at(at(&path)),
@@ -909,9 +916,9 @@ fn shell_history(home: &Path, out: &mut Out) {
             Finding::new(
                 format!("history|{rel}|{}", kinds.keys().copied().collect::<Vec<_>>().join(",")),
                 Severity::Medium,
-                "secret",
+                Category::Secrets,
                 format!("{total} credentials in ~/{rel}"),
-            )
+            ).topic(topic::EXPOSED)
             .detail(described.join(", "))
             .remedy("Rotate them, then delete those lines. Start commands that carry a secret with a space and enable HIST_IGNORE_SPACE (zsh) / HISTCONTROL=ignorespace (bash).")
             .at(at(&path)),
@@ -1237,9 +1244,10 @@ fn project_files(roots: &[PathBuf], exclude: &Exclude, max_depth: usize, out: &m
         let mut f = Finding::new(
             format!("file|{rel}|{}", found.describe(100)),
             severity,
-            "secret",
+            Category::Secrets,
             title,
         )
+        .topic(topic::EXPOSED)
         .detail(match &found {
             Found::WholeFile(what) => (*what).to_string(),
             Found::Names(names) => format!("Names: {}", list(names, 12)),

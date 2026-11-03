@@ -7,40 +7,81 @@
 
 ## The menu
 
-The logo's three lenses in the menu bar: solid when nothing needs attention,
-solid orange when something does (the tooltip gives the count), and outlined
-while the first checks run.
+The logo's three lenses in the menu bar, fading from the solid front lens to
+the faint back one: in the bar's colour when nothing needs attention, in orange
+when something does (the tooltip gives the count), and outlined while the first
+checks run.
 
-The menu lists every lens with a coloured dot: green when clear, the colour of
-its worst finding when not, blue while running, hollow before its first run.
-Each finding needing attention has a severity icon (filled red octagon
+The menu has one submenu per [category](lenses.md#categories) (AI agents,
+Packages, Software, Secrets, Malware, and Network and Privacy once a lens
+covers them), each with a coloured dot: green when clear, the colour of its
+worst finding when not, indigo while running, hollow before the first run.
+Inside, each of the category's lenses has a line with its own dot and summary
+(a lens that is off says so, and whether it is third party), then come the
+findings needing attention. Each has a severity icon (filled red octagon
 critical, orange triangle high, amber circle medium, blue `i` low, grey dot
 info) and a submenu: Fix It when Lenstica can, Open the file, **Copy Prompt
-for AI Agent**, and Show in Lenstica. Below them: Open Lenstica (⌘O),
-Settings (⌘,) and Quit (⌘Q). Everything else (the minimum age, applying,
-checking now, the settings file, start at login) lives in the window.
+for AI Agent**, and Show in Lenstica. The category ends with a prompt for all
+of them and Open in Lenstica. Below the categories: Open Lenstica (⌘O),
+Settings (⌘,) and Quit (⌘Q). The menu always covers every project; the
+window's project picker does not change it.
 
 ## The window
 
-- **Overview**: counts by severity and category, a card per lens with its
-  summary and a Run button.
-- **Findings**: search and filter by severity, category and lens; details,
-  remedy, every location (open or reveal), references, and actions: fix,
-  copy a prompt for an AI agent, ignore a package or one version of it,
-  ignore an advisory. One button copies a single prompt for everything shown.
-- **Lenses**: turn each on or off, run it now, see what it checked.
-- **Settings**: everything you would otherwise edit by hand, saved straight
-  into the file with its comments kept: the cooldown and alerts; a switch per
-  **check** and per **package manager** (one switched off is left exactly as
-  it is); which folders to include and exclude; every **repository and
-  worktree** found there, each with a switch (off adds it to `scan.exclude`);
-  the installed-packages audit; which **installed software** to check;
-  **notifications** (on or off, from which severity, per check, and whether
-  automatic fixes are announced); and **AI agents** (install the skill, copy
-  the MCP setup).
+The sidebar has the Overview, then one page per category, and at the bottom
+the project picker, Settings, a link to the project on GitHub and the version.
+Above the page, the top bar has Back and Forward (⌘[ and ⌘]) and where you
+are. On macOS the window has no separate title bar: the window buttons sit in
+the top bar, beside the logo, and dragging the bar moves the window
+(double-click zooms it). Windows and Linux keep their usual title bar.
 
-The window is an HTML page rendered by the system web view (WebKit, WebView2,
-WebKitGTK), so it looks the same on every platform.
+- **Overview**: how many findings need attention, by severity; a card per
+  category with its state and topics; and the findings that need attention
+  most. Check everything runs every lens that is on.
+- **A category** (AI agents, Packages, …): what it covers and its state; its
+  **lenses**, each with its state, summary and last run, a Run button and an
+  on/off switch (third-party lenses say what they send or install, and are off
+  until you turn them on); and its **findings**: filter by topic (Prompt
+  injection, Cooldown, Exposed…), severity and text; the details, remedy,
+  every location (open or reveal), references, and actions: fix, copy a
+  prompt for an AI agent, ignore a package or one version of it, ignore an
+  advisory. One button copies a single prompt for everything shown. A prompt
+  is shown before it is copied.
+- **The project picker**: which project the window shows. **All projects**,
+  **This Mac** (findings in no repository: package-manager settings,
+  installed software, credentials in your home folder, global agent
+  configuration), or one repository, which includes its worktrees. A finding
+  belongs to every project one of its locations is in, and shows only those
+  locations there. It changes only what is shown: every lens still checks
+  everything.
+- **Settings**: everything you would otherwise edit by hand, saved straight
+  into the file with its comments kept, in sections listed beside it:
+  - **General**: the cooldown, the lowest severity that needs attention, the
+    appearance, the language (see [Translating](translating.md)), and start
+    at login.
+  - **Notifications**: on or off, from which severity, whether automatic
+    fixes are announced, and per lens.
+  - **Package managers**: a switch per package manager (one switched off is
+    left exactly as it is), blocking install scripts, and Homebrew's
+    auto-update.
+  - **Projects**: which folders to include and exclude, and every
+    **repository and worktree** found there, each with a switch (off adds it
+    to `scan.exclude`).
+  - **Checks**: what the installed-packages audit and the software lens look
+    at, and what they never flag.
+  - **AI agents**: install the skill, copy the MCP setup, and the
+    **templates** prompts for agents are written with, with a live preview
+    (see [AI agents](ai-agents.md#prompt-templates)).
+
+`lenstica window <page>` opens it on `overview`, a category id (`packages`),
+`settings`, or one section of it (`settings/projects`).
+
+The window is a Svelte app (`ui/`, built into `assets/ui/`) rendered by the
+system web view (WebKit, WebView2, WebKitGTK), so it looks the same on every
+platform. Its design follows the logo: graphite and white glass in dark mode,
+graphite on light grey in light mode, with the same status colours as the menu.
+It is light or dark as the system is, unless Settings → App → Appearance
+(`window.appearance`) picks one.
 
 ## Schedules and notifications
 

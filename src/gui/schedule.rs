@@ -64,9 +64,12 @@ pub fn start(app: AppHandle, inbox: Receiver<Request>) {
             last_good: None,
             config_error: None,
         };
-        // Results already on disk count as runs, so a restart does not redo everything at once.
+        // Results already on disk count as runs, so a restart does not redo
+        // everything at once; those saved by an older version run again now.
         for r in lenses::store::load().values() {
-            s.remember(r);
+            if r.format == lenses::store::FORMAT {
+                s.remember(r);
+            }
         }
         super::refresh(&s.app);
         s.run(inbox, done_rx);
@@ -126,7 +129,7 @@ impl Scheduler {
             Err(e) => {
                 let text = format!("{e:#}");
                 if self.config_error.as_ref() != Some(&text) {
-                    super::notify_error(&format!("{text}. Lenstica keeps its last good settings."));
+                    super::notify_error(&crate::i18n::t!("notify.badSettings", error = text));
                     self.config_error = Some(text);
                 }
                 self.last_good.clone()
@@ -228,11 +231,7 @@ impl Scheduler {
     /// fix has re-run it, so the scheduler never starts it alongside.
     fn fix(&mut self, lens: String, key: String) {
         if self.running().contains(&lens) {
-            super::toast(
-                &self.app,
-                "That lens is running; try again when it finishes",
-                false,
-            );
+            super::toast(&self.app, crate::i18n::t!("toast.lensBusy"), false);
             return;
         }
         with_shared(&self.app, |sh| {
@@ -275,11 +274,7 @@ fn apply_all() -> Result<(String, Vec<String>)> {
         })
         .collect();
     Ok((
-        format!(
-            "{} set to {} days",
-            crate::lenses::shared::plural(changed, "package manager", "package managers"),
-            cfg.min_days
-        ),
+        crate::i18n::t!("toast.applied", count = changed, days = cfg.min_days),
         failed,
     ))
 }

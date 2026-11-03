@@ -1,0 +1,428 @@
+{
+  "language": {
+    "name": "English"
+  },
+  "app": {
+    "name": "Lenstica",
+    "loading": "Loading…",
+    "loadError": "The window could not load.",
+    "configError": "The settings file has an error, so Lenstica is using its defaults or last good settings: {error}",
+    "openConfig": "Open settings file"
+  },
+  "nav": {
+    "label": "Lenstica",
+    "overview": "Overview",
+    "categories": "Categories",
+    "settings": "Settings",
+    "github": "GitHub",
+    "version": "v{version}",
+    "off": "Off",
+    "offTitle": "No lens in this category is on",
+    "needAttention": {
+      "one": "{count} finding needs attention",
+      "other": "{count} findings need attention"
+    },
+    "back": "Back",
+    "forward": "Forward",
+    "backKeys": "Back (⌘[)",
+    "forwardKeys": "Forward (⌘])"
+  },
+  "project": {
+    "label": "Project: {name}",
+    "title": "The project the window shows",
+    "find": "Find a project…",
+    "noMatch": "No project matches.",
+    "all": "All projects",
+    "allNote": "Everything Lenstica checks",
+    "mac": "This Mac",
+    "macNote": "Settings, software and files outside any repository",
+    "projects": "Projects",
+    "looking": "Looking for repositories…",
+    "worktrees": {
+      "one": "{path} · {count} worktree",
+      "other": "{path} · {count} worktrees"
+    }
+  },
+  "severity": {
+    "critical": "Critical",
+    "high": "High",
+    "medium": "Medium",
+    "low": "Low",
+    "info": "Info",
+    "andAbove": "{severity} and above"
+  },
+  "state": {
+    "critical": "Critical findings",
+    "high": "High findings",
+    "medium": "Medium findings",
+    "low": "Low findings",
+    "info": "Information only",
+    "clear": "Clear",
+    "running": "Running",
+    "failed": "Failed",
+    "never": "Not run yet",
+    "off": "Off"
+  },
+  "time": {
+    "never": "never",
+    "justNow": "just now"
+  },
+  "categories": {
+    "agents": {
+      "title": "AI agents",
+      "description": "The instructions, skills, hooks and MCP servers your coding agents load, and the permissions they run with."
+    },
+    "packages": {
+      "title": "Packages",
+      "description": "Your dependencies and the package managers that install them: the cooldown, install scripts, known vulnerabilities and deprecations."
+    },
+    "software": {
+      "title": "Software",
+      "description": "Software installed on this machine and how it updates: tools and apps newer than the cooldown, and automatic updates."
+    },
+    "secrets": {
+      "title": "Secrets",
+      "description": "Credentials a malicious package running as you could read on disk, and credentials leaked into code."
+    },
+    "malware": {
+      "title": "Malware",
+      "description": "Known malicious packages and releases, and protection against installing them."
+    },
+    "network": {
+      "title": "Network",
+      "description": "Connections and services on this machine that others could reach or listen to."
+    },
+    "privacy": {
+      "title": "Privacy",
+      "description": "Packages and tools that report on you: telemetry and tracking."
+    }
+  },
+  "topics": {
+    "prompt-injection": "Prompt injection",
+    "hidden-text": "Hidden text",
+    "permissions": "Elevated permissions",
+    "rules-violations": "Rules violations",
+    "mcp": "MCP servers",
+    "cooldown": "Cooldown",
+    "install-scripts": "Install scripts",
+    "vulnerabilities": "Vulnerabilities",
+    "deprecated": "Deprecated",
+    "too-new": "Too new",
+    "outdated": "Outdated",
+    "auto-updates": "Auto updates",
+    "exposed": "Exposed",
+    "leaked": "Leaked",
+    "telemetry": "Telemetry"
+  },
+  "overview": {
+    "title": "Overview",
+    "checked": "{scope} · checked {when}",
+    "needAttention": {
+      "one": "{count} finding needs attention",
+      "other": "{count} findings need attention"
+    },
+    "nothing": "Nothing needs attention",
+    "policy": "Packages newer than {days} days are held back · findings at {severity} or above count",
+    "checkEverything": "Check everything",
+    "checking": "Checking ({count})…",
+    "categories": "Categories",
+    "needsAttention": "Needs attention",
+    "noneBody": "Findings at {severity} or above in {scope} appear here.",
+    "more": "and {count} more, in their categories",
+    "tileNoLens": "No lens on",
+    "tileNeed": {
+      "one": "{count} needs attention",
+      "other": "{count} need attention"
+    },
+    "tileFindings": {
+      "one": "{count} finding, none needing attention",
+      "other": "{count} findings, none needing attention"
+    },
+    "tileNothing": "Nothing found",
+    "lensesOn": {
+      "one": "{on} of {count} lens on",
+      "other": "{on} of {count} lenses on"
+    }
+  },
+  "category": {
+    "check": "Check {category}",
+    "lenses": "Lenses",
+    "lensesOn": "{on} of {count} on",
+    "findings": "Findings",
+    "shown": "{count} shown",
+    "all": "All",
+    "search": "Search titles, details, files…",
+    "searchLabel": "Search findings",
+    "minimum": "Lowest severity shown",
+    "listLabel": "Findings",
+    "copyOne": "Copy prompt for it…",
+    "copyAll": "Copy prompt for all {count}…",
+    "copyFirst": "Copy prompt for the first {count}…",
+    "copyTitle": "One brief for an AI coding agent covering every finding shown, to check before you copy it",
+    "aboutFirst": "The first {count} of {total} {category} findings shown",
+    "about": {
+      "one": "{count} {category} finding shown",
+      "other": "{count} {category} findings shown"
+    },
+    "headlineNoLens": "No lens is on",
+    "headlineNeed": {
+      "one": "{count} finding needs attention",
+      "other": "{count} findings need attention"
+    },
+    "headlineNotChecked": "Not checked yet",
+    "headlineNothing": "Nothing needs attention",
+    "noLensTitle": "No lens is on",
+    "noLensBody": "Turn one on above to check for {category}.",
+    "noMatchTitle": "No findings match",
+    "noMatchBody": "Try another topic, a lower severity or a different search.",
+    "nothingTitle": "Nothing found",
+    "nothingBody": "No findings in {scope}."
+  },
+  "lens": {
+    "run": "Run",
+    "running": "Running",
+    "runTitle": "Run {lens} now",
+    "turnOn": "Turn {lens} on",
+    "turnOff": "Turn {lens} off",
+    "thirdParty": "Third party",
+    "offUntil": "Off until you turn it on.",
+    "off": "Off",
+    "runningStatus": "Running…",
+    "notRun": "Not run yet",
+    "failed": "Failed: {error}",
+    "status": "{summary} · {when} · {seconds} s",
+    "every": "every {minutes} min",
+    "checked": "What was checked ({count})"
+  },
+  "finding": {
+    "whatToDo": "What to do",
+    "fix": "Fix it",
+    "copyPrompt": "Copy prompt for AI agent…",
+    "copyPromptTitle": "Shows the brief for an AI coding agent, to check before you copy it",
+    "ignoreVersion": "Ignore {name}@{version}",
+    "ignoreAll": "Ignore all of {name}",
+    "ignoreAdvisory": "Ignore {id}",
+    "where": "Where ({count})",
+    "open": "Open",
+    "reveal": "Reveal",
+    "references": "References",
+    "key": "Key: {key}"
+  },
+  "prompt": {
+    "title": "Prompt for your AI agent",
+    "close": "Close",
+    "writing": "Writing the prompt…",
+    "editTemplates": "Edit templates",
+    "editTitle": "Change how prompts are written: Settings → AI agents",
+    "findings": {
+      "one": "{count} finding",
+      "other": "{count} findings"
+    },
+    "lines": {
+      "one": "{count} line",
+      "other": "{count} lines"
+    },
+    "cancel": "Cancel",
+    "copy": "Copy prompt",
+    "copyTitle": "Copy it (⌘↩)"
+  },
+  "settings": {
+    "title": "Settings",
+    "savedTo": "Saved straight to {path}, comments kept.",
+    "editFile": "Edit settings file…",
+    "sectionsLabel": "Settings sections",
+    "recommended": "Recommended",
+    "useRecommended": "Use recommended ({value})",
+    "sections": {
+      "general": {
+        "title": "General",
+        "about": "The cooldown, what needs attention, and the app."
+      },
+      "notifications": {
+        "title": "Notifications",
+        "about": "Desktop notifications for new findings. Each finding is notified once; everything is still listed in the window and the menu."
+      },
+      "managers": {
+        "title": "Package managers",
+        "about": "Which package managers Lenstica sets the minimum age in and keeps an eye on, and how they install."
+      },
+      "projects": {
+        "title": "Projects",
+        "about": "Where lenses look for projects, lockfiles, secrets and agent instructions."
+      },
+      "checks": {
+        "title": "Checks",
+        "about": "What the package and software lenses look at. Turn lenses themselves on or off in their category."
+      },
+      "agents": {
+        "title": "AI agents",
+        "about": "Let a coding agent read Lenstica's findings and fix them, and choose how prompts for agents are written."
+      }
+    },
+    "groups": {
+      "cooldown": "Cooldown",
+      "alerts": "Alerts",
+      "app": "App",
+      "look": "Where to look",
+      "lookNote": "The folders lenses search. Each repository found there is a project in the window's project picker.",
+      "packages": "Installed packages",
+      "software": "Installed software",
+      "scripts": "Install scripts",
+      "homebrew": "Homebrew",
+      "perLens": "Per lens",
+      "perLensNote": "Lenses that are on. A lens that is off is not notified either.",
+      "managed": "Managed",
+      "managedNote": "One that is off is left exactly as it is.",
+      "repositories": "Repositories",
+      "repositoriesNote": "Every repository and worktree found under the folders above. Turning one off adds it to Exclude; leaving out a repository leaves out its worktrees too.",
+      "agentTools": "Skill and MCP server",
+      "agentToolsNote": "Every finding also has Copy prompt for AI agent, in the window and in the menu bar.",
+      "prompts": "AI prompts",
+      "promptsNote": "How Copy Prompt for AI Agent, lenstica prompt and the MCP server write the prompts they hand to an agent. Saved in [prompts] in the settings file."
+    },
+    "fields": {
+      "minDays": "Minimum release age, in days",
+      "minDaysWhy": "7 days would have kept out 8 of the 10 best-known supply-chain attacks of 2024-2025; most are caught and pulled within a week.",
+      "autoApply": "Re-apply automatically when a package manager drifts or is newly installed",
+      "interval": "Re-check package-manager settings every (minutes)",
+      "alertSeverity": "Lowest severity that needs attention (menu bar icon, counts, lenstica check)",
+      "roots": "Include: project folders to search, one per line. List single repositories here to search only those.",
+      "exclude": "Exclude: folders to leave out, one per line. A path skips that folder and everything in it; a bare name (fixtures) skips every folder called that.",
+      "worktrees": "Also every git worktree of the repositories found there",
+      "maxDepth": "Folder depth",
+      "auditEnabled": "Check locked and installed packages",
+      "auditGlobal": "Include global installs (npm -g, pnpm -g, uv tools, pip --user, cargo install)",
+      "auditInterval": "Re-check every (minutes)",
+      "auditIgnore": "Packages never to flag: name or name@version, one per line",
+      "softwareManagers": "The package managers themselves (npm, pnpm, Yarn, Bun, Deno, uv, pip, Poetry, Cargo)",
+      "softwareHomebrew": "Homebrew formulae (sqlite, node, git…), dated by their published bottle",
+      "softwareCasks": "Homebrew casks (apps), dated by their download; apps that update themselves are skipped",
+      "softwareRust": "Rust toolchains installed with rustup",
+      "softwareNode": "Node.js, when it is not from Homebrew",
+      "softwareIgnore": "Software never to flag: name or name@version, one per line",
+      "blockScripts": "Block dependencies' install scripts (npm ignore-scripts, Yarn enableScripts: false)",
+      "noAutoUpdate": "Stop Homebrew updating itself before every install (HOMEBREW_NO_AUTO_UPDATE=1 in ~/.homebrew/brew.env). New versions then arrive only with brew update.",
+      "appearance": "Appearance",
+      "appearanceNote": "System follows your system's light or dark setting.",
+      "system": "System",
+      "light": "Light",
+      "dark": "Dark",
+      "language": "Language",
+      "languageNote": "System uses your system's language when Lenstica speaks it, else English.",
+      "systemLanguage": "System ({language})",
+      "autostart": "Start the menu bar app at login",
+      "notify": "Show desktop notifications",
+      "sendTest": "Send a test",
+      "notifySeverity": "Notify from this severity up",
+      "sameAsAlerts": "Same as alerts ({severity})",
+      "notifyFixes": "Also when Lenstica restores a package manager's setting by itself",
+      "notifyFixesLabel": "Notify about automatic fixes",
+      "notifyLens": "Notify about {lens}",
+      "applyNow": "Apply now",
+      "applyTitle": "Write the minimum age into every package manager that is on",
+      "leftAlone": "Left alone",
+      "leave": "Leave {name} alone",
+      "manage": "Manage {name}",
+      "lookAgain": "Look again",
+      "looking": "Looking for repositories…",
+      "couldNotList": "Could not list repositories",
+      "noRepos": "No git repositories under the folders above.",
+      "worktreeOf": "worktree of {path}",
+      "excluded": "excluded",
+      "excludedTitle": "Left out by a parent folder, its main checkout, or a folder name in Exclude",
+      "searchAgain": "Search it again",
+      "leaveOut": "Leave it out",
+      "skill": "Skill for Claude Code",
+      "skillInstalled": "Installed at {path}. Teaches the agent the Lenstica CLI.",
+      "skillNotInstalled": "Teaches the agent the Lenstica CLI. Installs to {path}.",
+      "install": "Install",
+      "reinstall": "Reinstall",
+      "mcpClaude": "MCP server for Claude Code",
+      "copyCommand": "Copy command",
+      "mcpOther": "MCP server for other agents (Claude Desktop, Cursor…)",
+      "mcpOtherNote": "Their mcpServers setting",
+      "copyJson": "Copy JSON"
+    }
+  },
+  "templates": {
+    "finding": "One finding",
+    "findingNote": "Copy Prompt for AI Agent on a single finding.",
+    "findings": "Several findings",
+    "findingsNote": "A prompt for many at once; {{findings}} is each one written with the list template.",
+    "item": "Each finding in a list",
+    "itemNote": "One finding inside the several-findings prompt.",
+    "which": "Template",
+    "own": "Lenstica's own",
+    "custom": "Customised",
+    "unsaved": "Not saved",
+    "reset": "Reset",
+    "resetTitle": "Go back to Lenstica's own template",
+    "save": "Save",
+    "template": "Template",
+    "previewReal": "Preview · your current findings",
+    "previewSample": "Preview · sample findings",
+    "help": "Click a value to insert it. {shown} keeps its text only when there is a remedy; {hidden} only when there is not."
+  },
+  "menu": {
+    "checking": "Checking…",
+    "clear": "Nothing needs attention · {days}-day cooldown",
+    "need": {
+      "one": "{count} needs attention · {days}-day cooldown",
+      "other": "{count} need attention · {days}-day cooldown"
+    },
+    "off": "Off",
+    "offThirdParty": "Off · third party, opt in from Lenstica",
+    "notRun": "Not run yet",
+    "lensLine": "{lens}: {status}",
+    "findingAbout": "{severity} · {lens}",
+    "fix": "Fix It",
+    "openFile": "Open {file}",
+    "copyPrompt": "Copy Prompt for AI Agent",
+    "show": "Show in Lenstica",
+    "copyAll": "Copy Prompt for All {count}",
+    "showAll": "Show All {count} in Lenstica",
+    "openCategory": "Open {category} in Lenstica",
+    "openLenstica": "Open Lenstica",
+    "settings": "Settings",
+    "quit": "Quit",
+    "tooltipChecking": "Lenstica: checking…",
+    "tooltipClear": "Lenstica: nothing needs attention",
+    "tooltipNeed": {
+      "one": "Lenstica: {count} needs attention",
+      "other": "Lenstica: {count} need attention"
+    },
+    "tooltipCritical": {
+      "one": "Lenstica: {count} needs attention (critical)",
+      "other": "Lenstica: {count} need attention (critical)"
+    }
+  },
+  "notify": {
+    "title": "Lenstica",
+    "critical": "Lenstica: critical",
+    "newFindings": {
+      "one": "{lens}: {count} new finding, worst {severity}",
+      "other": "{lens}: {count} new findings, worst {severity}"
+    },
+    "test": "Test notification. New findings will appear like this.",
+    "windowFailed": "Cannot open the window: {error}",
+    "badSettings": "{error}. Lenstica keeps its last good settings."
+  },
+  "toast": {
+    "copied": "Copied",
+    "copiedOne": "Copied a prompt for your AI agent",
+    "copiedMany": "Copied a prompt covering {count} findings",
+    "ignoredPackage": "Added {entry} to audit.ignore",
+    "ignoredAdvisory": "Ignoring advisory {id}",
+    "saved": "Saved {setting}",
+    "manage": "Lenstica will manage {name}",
+    "leaveAlone": "Lenstica will leave {name} alone",
+    "leavingOut": "Leaving out {path}",
+    "searchingAgain": "Searching {path} again",
+    "installedSkill": "Installed the skill at {path}",
+    "lensBusy": "That lens is running; try again when it finishes",
+    "applied": {
+      "one": "{count} package manager set to {days} days",
+      "other": "{count} package managers set to {days} days"
+    }
+  }
+}

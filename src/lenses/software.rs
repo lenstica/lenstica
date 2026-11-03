@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result};
 use chrono::{DateTime, NaiveDate, Utc};
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Location, Report, Severity, topic};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -774,6 +774,9 @@ impl Lens for SoftwareAge {
     fn description(&self) -> &str {
         "Installed software published less than the cooldown ago: the package managers themselves, Homebrew formulae and casks, Rust toolchains and Node.js. None of them can hold back new releases, so this reports them after installation."
     }
+    fn categories(&self) -> &[Category] {
+        &[Category::Software]
+    }
     fn default_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(60 * 60)
     }
@@ -844,7 +847,7 @@ impl Lens for SoftwareAge {
                 Finding::new(
                     format!("too-new|{}|{}|{}", item.kind, item.name, item.version),
                     Severity::Medium,
-                    "cooldown",
+                    Category::Software,
                     format!(
                         "{} {} was published {} ago",
                         item.name,
@@ -852,6 +855,7 @@ impl Lens for SoftwareAge {
                         humanize(age.max(60))
                     ),
                 )
+                .topic(topic::TOO_NEW)
                 .detail(format!(
                     "{} {}, published {} UTC. {}",
                     capitalise(item.what),

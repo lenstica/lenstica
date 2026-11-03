@@ -48,6 +48,8 @@ pub struct Config {
     pub install_scripts: InstallScripts,
     pub homebrew: Homebrew,
     pub software: Software,
+    pub window: Window,
+    pub prompts: Prompts,
     /// `[lenses.<id>]`: `enabled`, `interval_minutes`, and lens-specific keys.
     #[serde(alias = "checkers")]
     pub lenses: std::collections::BTreeMap<String, toml::Table>,
@@ -100,6 +102,45 @@ impl Default for Software {
     }
 }
 
+/// `[prompts]`: the templates prompts for AI agents are written with; an
+/// empty one means Lenstica's own (`crate::prompt::DEFAULT_*`).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Prompts {
+    pub finding: String,
+    pub findings: String,
+    pub item: String,
+}
+
+/// `[window]`: how the window looks.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Window {
+    pub appearance: Appearance,
+    /// `system`, or a language code the window speaks (`en`); one it does not
+    /// speak falls back to English.
+    pub language: String,
+}
+
+impl Default for Window {
+    fn default() -> Self {
+        Self {
+            appearance: Appearance::System,
+            language: "system".to_string(),
+        }
+    }
+}
+
+/// Light or dark: `system` follows the system's setting, the others keep to one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// Another tool run as a lens; see `[[external]]` in the template.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -111,6 +152,10 @@ pub struct External {
     pub command: Vec<String>,
     #[serde(default)]
     pub format: ExternalFormat,
+    /// Where the tool appears: one or more of agents, packages, software,
+    /// secrets, malware, network, privacy. Known scanners have a default.
+    #[serde(default)]
+    pub categories: Vec<lenstica_lens::Category>,
     #[serde(default)]
     pub per_root: bool,
     #[serde(default)]
@@ -135,6 +180,16 @@ pub enum ExternalFormat {
 }
 
 impl ExternalFormat {
+    /// Where a scanner's findings go when `categories` is not given.
+    pub fn default_categories(self) -> &'static [lenstica_lens::Category] {
+        use lenstica_lens::Category;
+        match self {
+            Self::Lenstica => &[],
+            Self::Gitleaks | Self::Trufflehog => &[Category::Secrets],
+            Self::OsvScanner => &[Category::Packages, Category::Malware],
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Lenstica => "lenstica",
@@ -196,6 +251,8 @@ impl Default for Config {
             install_scripts: InstallScripts::default(),
             homebrew: Homebrew::default(),
             software: Software::default(),
+            window: Window::default(),
+            prompts: Prompts::default(),
             lenses: Default::default(),
             external: Vec::new(),
         }
@@ -353,11 +410,33 @@ node = true
 # Software never to flag, as "name" or "name@version" (audit.ignore applies too).
 ignore = []
 
+[prompts]
+# Templates for the prompts handed to AI agents (Copy Prompt for AI Agent,
+# `lenstica prompt`, the MCP server). Empty means Lenstica's own; edit them in
+# Settings → AI prompts, which shows the defaults and a preview. {{title}}
+# inserts a value; {{#remedy}}...{{/remedy}} keeps its text only when the value
+# is not empty, {{^remedy}}...{{/remedy}} only when it is. The values are listed
+# in docs/ai-agents.md.
+finding = ""               # one finding
+findings = ""              # several; {{findings}} is each one written with `item`
+item = ""                  # one finding in that list
+
+[window]
+# The window's look: "system" follows the system's light or dark setting;
+# "light" or "dark" keeps to one whatever the system uses.
+appearance = "system"
+# The window's language: "system", or a language code it speaks ("en").
+language = "system"
+
 # Other tools can run as lenses. Their findings appear in the menu, the
 # window and notifications like the built-in ones. `format` is `lenstica`
 # (the tool prints Lenstica's JSON report), `gitleaks`, `osv-scanner` or
 # `trufflehog`. With `per_root`, the command runs once per search root and
 # worktree, with `{root}` replaced. Secret values in tool output are discarded.
+#
+# A tool printing Lenstica's report also says where it belongs:
+# `categories = ["secrets"]` (agents, packages, software, secrets, malware,
+# network, privacy); the scanners above have a default.
 #
 # [[external]]
 # id = "gitleaks"
@@ -367,18 +446,21 @@ ignore = []
 # interval_minutes = 240
 
 # Per-lens settings: `enabled`, `interval_minutes`, and the lens's own
-# keys. `lenstica lenses` lists the ids.
+# keys. `lenstica lenses` lists the ids. Lenses that rely on a third party
+# are off until you turn them on with `enabled = true`.
 [lenses]
 # [lenses.vulnerabilities]
+# enabled = true           # opt in: sends package names and versions to OSV.dev
 # refresh_hours = 6        # how often OSV.dev is asked again about each package
 # ignore_advisories = []   # e.g. ["GHSA-xxxx-xxxx-xxxx"] once you have assessed it
 # [lenses.secrets]
 # enabled = true
 # max_depth = 6            # folder levels below each root searched for .env and key files
 # [lenses.aikido-malware]
+# enabled = true           # opt in: downloads Aikido Security's malware lists
 # refresh_hours = 6        # how often the Aikido malware lists are downloaded again
 # [lenses.safe-chain]
-# enabled = false          # stop recommending Aikido Safe Chain
+# enabled = true           # opt in: recommends installing Aikido Safe Chain
 # [lenses.agent-instructions]
 # ignore = []              # files or folders whose agent instructions you have reviewed, e.g. ["~/.agents/skills/mine"]
 # max_depth = 6            # how deep to look for CLAUDE.md, AGENTS.md, .claude/, .cursor/ ... in your repositories
@@ -467,6 +549,7 @@ impl Config {
                 self.monitor.notify_severity
             );
         }
+        crate::prompt::Templates::from_config(self).check()?;
         let builtin = crate::lenses::registry(&Config::default());
         let mut ids = std::collections::BTreeSet::new();
         for e in &self.external {
@@ -484,6 +567,17 @@ impl Config {
             }
             if e.command.is_empty() {
                 bail!("external lens `{}` has an empty command", e.id);
+            }
+            if e.categories.is_empty() && e.format.default_categories().is_empty() {
+                let ids: Vec<&str> = lenstica_lens::Category::ALL
+                    .iter()
+                    .map(|c| c.id())
+                    .collect();
+                bail!(
+                    "external lens `{}`: say where it belongs with `categories = [...]`, one or more of {}",
+                    e.id,
+                    ids.join(", ")
+                );
             }
             if e.interval_minutes == Some(0) {
                 bail!(
@@ -709,6 +803,41 @@ mod tests {
         assert_eq!(cfg.monitor.interval_minutes, 15);
         assert!(cfg.monitor.auto_apply && cfg.monitor.notify);
         assert_eq!(cfg.scan.roots, vec!["~/Developer"]);
+        assert_eq!(cfg.window.appearance, Appearance::System);
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn appearance_is_system_light_or_dark() {
+        let cfg: Config = toml::from_str("[window]\nappearance = \"light\"").unwrap();
+        assert_eq!(cfg.window.appearance, Appearance::Light);
+        let err = toml::from_str::<Config>("[window]\nappearance = \"sepia\"").unwrap_err();
+        assert!(err.to_string().contains("system"), "{err}");
+    }
+
+    #[test]
+    fn a_broken_prompt_template_makes_the_settings_invalid() {
+        let cfg: Config = toml::from_str("[prompts]\nfinding = \"{{nope}}\"").unwrap();
+        assert!(
+            cfg.validate()
+                .unwrap_err()
+                .to_string()
+                .contains("prompts.finding")
+        );
+    }
+
+    #[test]
+    fn an_external_report_tool_says_where_it_belongs() {
+        let tool = "[[external]]\nid = \"mine\"\ncommand = [\"mine\"]\n";
+        let cfg: Config = toml::from_str(tool).unwrap();
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("categories = [...]"), "{err}");
+        let cfg: Config = toml::from_str(&format!("{tool}categories = [\"network\"]")).unwrap();
+        cfg.validate().unwrap();
+        let cfg: Config = toml::from_str(
+            "[[external]]\nid = \"gl\"\ncommand = [\"gitleaks\"]\nformat = \"gitleaks\"",
+        )
+        .unwrap();
         cfg.validate().unwrap();
     }
 

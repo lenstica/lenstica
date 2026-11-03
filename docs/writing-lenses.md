@@ -27,27 +27,41 @@ per_root = true          # once per search root and worktree, {root} replaced
 interval_minutes = 240
 ```
 
+Every lens appears under one or more [categories](lenses.md#categories):
+`agents`, `packages`, `software`, `secrets`, `malware`, `network`, `privacy`.
+gitleaks and trufflehog go under Secrets and osv-scanner under Packages and
+Malware unless `categories = [...]` says otherwise.
+
 Lenses run as `[[external]]` tools are separate programs with their own
 licences.
 
 ## Your own CLI
 
-With `format = "lenstica"`, print this on stdout (the exit code is ignored
-when the output is valid):
+With `format = "lenstica"`, say where the tool belongs:
+
+```toml
+[[external]]
+id = "listening"
+command = ["my-listening-check", "--json"]
+format = "lenstica"
+categories = ["network"]
+```
+
+and print this on stdout (the exit code is ignored when the output is valid):
 
 ```json
 {
-  "summary": "2 services missing a code owner",
-  "passing": ["checked 14 services"],
+  "summary": "1 service listening on every interface",
+  "passing": ["checked 6 listening ports"],
   "findings": [
     {
-      "key": "owners|billing",
+      "key": "listen|redis|6379",
       "severity": "medium",
-      "category": "settings",
-      "title": "billing has no CODEOWNERS entry",
+      "category": "network",
+      "title": "Redis listens on every interface (port 6379)",
       "detail": "…",
-      "remedy": "Add an owner in .github/CODEOWNERS",
-      "locations": [{ "label": "~/code/billing", "path": "/Users/me/code/billing" }],
+      "remedy": "Bind it to 127.0.0.1 in redis.conf",
+      "locations": [{ "label": "/opt/homebrew/etc/redis.conf", "path": "/opt/homebrew/etc/redis.conf" }],
       "links": []
     }
   ]
@@ -55,13 +69,20 @@ when the output is valid):
 ```
 
 `key` must be stable for the same problem: each key is notified once.
-Severities: `info`, `low`, `medium`, `high`, `critical`.
+Severities: `info`, `low`, `medium`, `high`, `critical`. `category` is one of
+the lens's categories; an optional `topic` puts the finding under one of the
+category's filters in the window (`exposed`, `cooldown`, `prompt-injection`;
+see [Lenses](lenses.md#categories)). A finding whose location is inside a
+repository shows under that project in the window's project picker.
 
 ## A Rust crate
 
 Depend on [`crates/lenstica-lens`](../crates/lenstica-lens), implement its
-`Lens` trait (`run(&Context) -> Report`, optionally `fix`), and register it in
-`src/lenses/mod.rs` behind a feature. The `Context` gives the search roots
+`Lens` trait (`categories()`, `run(&Context) -> Report`, optionally `fix`),
+and register it in `src/lenses/mod.rs` behind a feature. `categories()` names
+where the lens appears, at least one. A lens that sends data to a third
+party, or runs or recommends a third party's tool, says so in
+`third_party()`, and is then off until the user turns it on. The `Context` gives the search roots
 (with worktrees), the PATH, a state directory, the lens's own
 `[lenses.<id>]` settings and the shared package inventory. The secrets lens
 ([`crates/lenstica-secrets`](../crates/lenstica-secrets)) is built exactly

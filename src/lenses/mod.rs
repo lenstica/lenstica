@@ -112,6 +112,13 @@ pub fn registry(cfg: &Config) -> Vec<Registered> {
     all
 }
 
+/// The lenses registered with a category, on or off, in display order.
+pub fn in_category(all: &[Registered], category: lenstica_lens::Category) -> Vec<&Registered> {
+    all.iter()
+        .filter(|r| r.lens.categories().contains(&category))
+        .collect()
+}
+
 pub fn find(cfg: &Config, id: &str) -> Result<Registered> {
     let all = registry(cfg);
     let known: Vec<String> = all.iter().map(|r| r.id().to_string()).collect();
@@ -130,6 +137,10 @@ pub fn enabled(cfg: &Config, r: &Registered) -> bool {
         .and_then(toml::Value::as_bool)
     {
         return on;
+    }
+    // A lens that relies on a third party is off until the user turns it on.
+    if r.lens.third_party().is_some() {
+        return false;
     }
     match r.group {
         Group::Dependencies => cfg.audit.enabled,
@@ -190,18 +201,6 @@ pub fn notifies(cfg: &Config, id: &str) -> bool {
 pub fn is_alert(cfg: &Config, f: &Finding) -> bool {
     f.severity >= threshold(cfg)
 }
-
-/// Every finding category the built-in lenses use, for filters and schemas.
-pub const CATEGORIES: [&str; 8] = [
-    "malware",
-    "vulnerability",
-    "secret",
-    "cooldown",
-    "deprecated",
-    "settings",
-    "agent",
-    "telemetry",
-];
 
 /// Most severe first, then by title: the order every list of findings uses.
 pub fn by_severity(a: &Finding, b: &Finding) -> Ordering {
@@ -330,4 +329,75 @@ pub fn fix(cfg: &Config, lens_id: &str, key: &str) -> Result<(String, RunResult)
     }
     let done = with_context(cfg, lens_id, false, |cx| r.lens.fix(cx, &finding))?;
     Ok((done, run(cfg, &r, false)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_lens_has_a_category_and_third_parties_are_opt_in() {
+        let cfg = Config::default();
+        for r in registry(&cfg) {
+            assert!(
+                !r.lens.categories().is_empty(),
+                "{} has no category",
+                r.id()
+            );
+            assert_eq!(
+                enabled(&cfg, &r),
+                r.lens.third_party().is_none(),
+                "{} on by default",
+                r.id()
+            );
+        }
+        let off: Vec<String> = registry(&cfg)
+            .iter()
+            .filter(|r| !enabled(&cfg, r))
+            .map(|r| r.id().to_string())
+            .collect();
+        assert_eq!(off, ["vulnerabilities", "aikido-malware", "safe-chain"]);
+    }
+
+    #[test]
+    fn a_third_party_lens_turns_on_in_its_own_settings() {
+        let cfg: Config = toml::from_str("[lenses.vulnerabilities]\nenabled = true").unwrap();
+        let osv = find(&cfg, "vulnerabilities").unwrap();
+        assert!(enabled(&cfg, &osv));
+    }
+
+    #[test]
+    fn the_window_names_categories_and_topics_as_the_lens_api_does() {
+        // The window's English messages repeat these, so a translation has them to start from.
+        let en = include_str!("../../i18n/en.json");
+        for c in lenstica_lens::Category::ALL {
+            assert!(
+                en.contains(&format!("\"{}\"", c.title())),
+                "{} title",
+                c.id()
+            );
+            assert!(
+                en.contains(&format!("\"{}\"", c.description())),
+                "{} description",
+                c.id()
+            );
+            for (id, title) in c.topics() {
+                assert!(
+                    en.contains(&format!("{id}: \"{title}\""))
+                        || en.contains(&format!("\"{id}\": \"{title}\"")),
+                    "topic {id}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn stored_findings_from_before_categories_still_load() {
+        let old = r#"{"key":"vuln|npm|x|1","severity":"high","category":"vulnerability","title":"t","lens":"vulnerabilities"}"#;
+        let f: Finding = serde_json::from_str(old).unwrap();
+        assert_eq!(
+            (f.category, f.topic.as_str()),
+            (lenstica_lens::Category::Packages, "")
+        );
+    }
 }

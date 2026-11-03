@@ -1,0 +1,196 @@
+/* Lenstica's design tokens, taken from the logo: three glass lenses on
+   graphite, white with light where they overlap, soft rounded shapes.
+   Defined once here; src/icon.rs draws the menu's dots in the same status
+   colours, and a test there keeps the two in step. */
+@import "tailwindcss";
+
+/* Status colours: dots, icons and badges, the same in both themes and in the
+   menu bar menu. */
+@theme {
+  --color-critical: #e5484d;
+  --color-high: #f76808;
+  --color-medium: #f5a524;
+  --color-low: #3e8ef7;
+  --color-info: #8e8e93;
+  --color-clear: #30a46c;
+  --color-running: #6e6ef8;
+  --color-failed: #a18072;
+  /* The tray icon's colour when something needs attention, and the text on
+     it (graphite: white on this orange is only 2.2:1). */
+  --color-attention: #ff9500;
+  --color-on-attention: #1c1c1e;
+  /* A problem as a filled surface (an error toast): white on it meets AA,
+     which white on --color-critical (3.9:1) does not. */
+  --color-critical-strong: #c4272d;
+  --color-on-critical: #ffffff;
+  /* A switch's thumb, and what dims the page behind a dialog. */
+  --color-thumb: #ffffff;
+  --shadow-thumb: 0 1px 2px rgb(0 0 0 / 0.3);
+  --color-scrim: rgb(0 0 0 / 0.35);
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* One radius scale: the soft lens tips. */
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --radius-xl: 18px;
+
+  /* Page widths: every page shares one, so titles line up from page to page
+     and wide windows do not stretch lines and rows out of reach; Settings'
+     forms are narrower, so a label stays near its control. */
+  --container-page: 1120px;
+  --container-form: 720px;
+
+  /* One height for every button, field, select and chip (h-control), and
+     one for navigation rows: the sidebar, Settings' sections, the project
+     picker (h-nav). */
+  --spacing-control: 32px;
+  --spacing-nav: 36px;
+
+  /* One type scale. */
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-base: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 21px;
+}
+
+/* Neutrals and the glass accent, per theme. Light and dark follow the
+   system, or Settings → App → Appearance (which sets the window's theme). */
+:root {
+  color-scheme: light dark;
+  --bg: #f3f3f5;
+  --sidebar: #eaeaed;
+  --panel: #ffffff;
+  --raised: #f7f7f9;
+  --line: #e3e3e8;
+  --line-strong: #d3d3d9;
+  --fg: #1c1c1e;
+  --muted: #56565d;
+  --faint: #66666d;
+  /* Selected, active and hover: graphite glass with a thin rim. */
+  --glass: rgb(28 28 30 / 0.055);
+  --glass-strong: rgb(28 28 30 / 0.09);
+  --rim: rgb(28 28 30 / 0.13);
+  --primary: #1c1c1e;
+  --on-primary: #ffffff;
+  --focus: rgb(28 28 30 / 0.5);
+  --shadow: 0 1px 2px rgb(16 16 20 / 0.05), 0 6px 18px -8px rgb(16 16 20 / 0.12), inset 0 1px 0 rgb(255 255 255 / 0.7);
+  /* Text colours meet WCAG AA (4.5:1) on every surface in both themes:
+     faint is the lightest that does. Status colours as text are darker here. */
+  --t-critical: #c4272d;
+  --t-high: #a84300;
+  --t-medium: #8f5b00;
+  --t-low: #1d64c8;
+  --t-info: #63636a;
+  --t-clear: #17703f;
+  --t-running: #4b4bd6;
+  --t-failed: #7d5d50;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e;
+    --sidebar: #161618;
+    --panel: #232326;
+    --raised: #2a2a2d;
+    --line: #313135;
+    --line-strong: #3c3c41;
+    --fg: #f2f2f4;
+    --muted: #b2b2b9;
+    --faint: #939399;
+    /* White glass. */
+    --glass: rgb(255 255 255 / 0.06);
+    --glass-strong: rgb(255 255 255 / 0.1);
+    --rim: rgb(255 255 255 / 0.15);
+    --primary: #f2f2f4;
+    --on-primary: #1c1c1e;
+    --focus: rgb(255 255 255 / 0.6);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.35), 0 8px 24px -12px rgb(0 0 0 / 0.5), inset 0 1px 0 rgb(255 255 255 / 0.05);
+    --t-critical: #ff6b70;
+    --t-high: #ff8a3d;
+    --t-medium: #f5b13d;
+    --t-low: #6aa8ff;
+    --t-info: #a3a3aa;
+    --t-clear: #3dd68c;
+    --t-running: #9b9bff;
+    --t-failed: #c4a597;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-panel: var(--panel);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-glass: var(--glass);
+  --color-glass-strong: var(--glass-strong);
+  --color-rim: var(--rim);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-focus: var(--focus);
+  --color-t-critical: var(--t-critical);
+  --color-t-high: var(--t-high);
+  --color-t-medium: var(--t-medium);
+  --color-t-low: var(--t-low);
+  --color-t-info: var(--t-info);
+  --color-t-clear: var(--t-clear);
+  --color-t-running: var(--t-running);
+  --color-t-failed: var(--t-failed);
+  --shadow-card: var(--shadow);
+}
+
+@layer base {
+  /* The base text size is set on html, so a rem is 13px here, not 16px:
+     Tailwind's spacing steps are 3.25px. Widths that must be exact are in px. */
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: var(--text-base);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  #app {
+    height: 100%;
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  button {
+    cursor: pointer;
+  }
+  ::selection {
+    background: var(--glass-strong);
+  }
+}
+
+@utility tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* The running pulse, still for those who ask for less motion. */
+@keyframes pulse-soft {
+  from { opacity: 0.35; }
+  to { opacity: 1; }
+}
+@utility animate-running {
+  animation: pulse-soft 0.9s ease-in-out infinite alternate;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
+}

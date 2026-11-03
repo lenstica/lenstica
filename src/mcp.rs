@@ -8,7 +8,7 @@
 use std::io::{BufRead, Write};
 
 use anyhow::{Context, Result, bail};
-use lenstica_lens::{Finding, Severity};
+use lenstica_lens::{Category, Finding, Severity};
 use serde_json::{Value, json};
 
 use crate::config::Config;
@@ -118,13 +118,13 @@ fn tools() -> Value {
         },
         {
             "name": "lenstica_findings",
-            "description": "List current findings, most severe first. Each has lens, key, severity, category, title, where it is, and whether Lenstica can fix it.",
+            "description": "List current findings, most severe first. Each has lens, key, severity, category, topic, title, where it is, and whether Lenstica can fix it.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"], "description": "Lowest severity to include (default low)" },
                     "lens": { "type": "string", "description": "Only this lens id, e.g. secrets, vulnerabilities, package-age" },
-                    "category": { "type": "string", "enum": lenses::CATEGORIES },
+                    "category": { "type": "string", "enum": Category::ALL.map(Category::id) },
                     "query": { "type": "string", "description": "Only findings whose title, detail or locations contain this text" },
                     "limit": { "type": "integer", "minimum": 1, "maximum": 500, "description": "Default 50" }
                 }
@@ -191,6 +191,7 @@ fn brief(f: &Finding) -> Value {
         "key": f.key,
         "severity": f.severity.label(),
         "category": f.category,
+        "topic": f.topic,
         "title": f.title,
         "where": f.locations.iter().take(3).map(|l| l.label.clone()).collect::<Vec<_>>(),
         "locations": f.locations.len(),
@@ -261,7 +262,10 @@ fn call(name: &str, args: &Value) -> Result<String> {
                 None => Severity::Low,
             };
             let lens = str_arg(args, "lens");
-            let category = str_arg(args, "category");
+            let category = str_arg(args, "category")
+                .map(str::parse::<Category>)
+                .transpose()
+                .map_err(anyhow::Error::msg)?;
             let query = str_arg(args, "query").map(str::to_lowercase);
             let limit = args
                 .get("limit")
@@ -303,12 +307,12 @@ fn call(name: &str, args: &Value) -> Result<String> {
             );
             let (f, result) = find(&results, lens, key)?;
             let mut value = serde_json::to_value(f)?;
-            value["brief"] = Value::String(prompt::for_finding(f, &result.title));
+            value["brief"] = Value::String(prompt::for_finding(&cfg, f, &result.title));
             Ok(pretty(&value))
         }
         "lenstica_prompt" => {
             let list = prompt::collect(&cfg, &results, &[(str_arg(args, "lens"), None)]);
-            Ok(prompt::for_findings(&list))
+            Ok(prompt::for_findings(&cfg, &list))
         }
         "lenstica_run" => {
             let only: Vec<String> = args

@@ -1,0 +1,24 @@
+{
+  "name": "lenstica-ui",
+  "private": true,
+  "type": "module",
+  "description": "The Lenstica window. `pnpm build` writes it to ../assets/ui, which is committed so building Lenstica needs no Node.",
+  "scripts": {
+    "dev": "vite build --watch",
+    "build": "vite build",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "dependencies": {
+    "@lucide/svelte": "^1.62.0",
+    "bits-ui": "^2.20.2",
+    "svelte": "^5.57.3"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "svelte-check": "^4.7.7",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.5"
+  }
+}

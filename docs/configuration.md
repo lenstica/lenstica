@@ -59,8 +59,17 @@ rust_toolchains = true
 node = true
 ignore = []                # "name" or "name@version"
 
+[window]
+appearance = "system"      # "light" or "dark" overrides the system setting
+language = "system"        # or a language code the window speaks: "en"
+
+[prompts]                  # templates for prompts handed to AI agents; empty: Lenstica's own
+finding = ""               # see docs/ai-agents.md#prompt-templates
+findings = ""
+item = ""
+
 [lenses.safe-chain]
-enabled = true             # false: stop recommending Safe Chain
+enabled = true             # opt in: recommend Aikido Safe Chain
 
 [lenses.agent-instructions]
 ignore = []                # files or folders you have reviewed, e.g. ["~/.agents/skills/mine"]
@@ -69,13 +78,17 @@ ignore = []                # files or folders you have reviewed, e.g. ["~/.agent
 notify = false             # list a lens's findings without notifying them
 
 [lenses.vulnerabilities]
+enabled = true             # opt in: sends package names and versions to OSV.dev
 refresh_hours = 6
 ignore_advisories = []     # e.g. ["GHSA-xxxx-xxxx-xxxx"]
 ```
 
 Every lens also accepts `enabled` and `interval_minutes` under
-`[lenses.<id>]`. External lenses are declared with `[[external]]`; see
-[Writing lenses](writing-lenses.md).
+`[lenses.<id>]`. Lenses that rely on a third party (`vulnerabilities`,
+`aikido-malware`, `safe-chain`) are off unless `enabled = true`; see
+[Lenses](lenses.md#third-party-lenses-are-opt-in). External lenses are
+declared with `[[external]]`, with `categories = [...]` saying where they
+appear; see [Writing lenses](writing-lenses.md).
 
 ## Where things live
 

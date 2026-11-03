@@ -62,8 +62,9 @@ developer's machine that their team wants central visibility.
 ## 2. Principles
 
 1. **Local first.** Everything runs on the machine. What leaves it is listed in
-   the README (package names and versions to public registries and OSV.dev, the
-   Aikido lists downloaded whole). The free edition sends nothing to Lenstica.
+   the README (package names and versions to public registries; to OSV.dev and
+   Aikido only from lenses the user turns on). The free edition sends nothing
+   to Lenstica.
 2. **Never store or show a secret value.** Findings name the file, the setting
    or variable name and the kind of credential, never the contents. This
    applies to every lens, to logs, to prompts handed to AI agents, and to
@@ -84,6 +85,9 @@ developer's machine that their team wants central visibility.
 8. **Patterns are hints, not verdicts.** Heuristic lenses (agent instructions)
    say "read these lines", show only the matched words, and are tuned against
    real machines for false positives before they ship.
+9. **Third parties are opt-in.** A lens that sends data to a third party, or
+   runs or recommends a third party's tool, is off until the user turns it on
+   (`Lens::third_party`).
 
 ## 3. Editions and business model
 
@@ -156,7 +160,9 @@ lenstica (one binary: CLI + menu bar app + MCP server)
 ├── src/mcp.rs, src/agent.rs, src/prompt.rs   AI-agent integrations
 ├── src/config.rs             the settings file (template, validation, migration of new keys)
 ├── src/migrate.rs            moving over from the pre-rename `cooldown` paths
-└── assets/ui/                the window (plain HTML/JS, rendered by the system web view)
+├── i18n/                     the app's text, one JSON file per language (window, menu, notifications)
+├── ui/                       the window: Svelte 5 + Vite + Tailwind CSS + Bits UI, design tokens in ui/src/app.css
+└── assets/ui/                the window as built by `pnpm build` (committed; rendered by the system web view)
 ```
 
 ### 4.2 How a lens runs
@@ -193,7 +199,11 @@ Headless Linux runs `lenstica watch` as a systemd user service.
 
 ## 5. Lenses
 
-A **lens** is one focused check. Kinds:
+A **lens** is one focused check. Each registers with one or more
+**categories** (AI agents, Packages, Software, Secrets, Malware, Network,
+Privacy), which organise the window and the menu bar menu; each finding names
+a category and a **topic** within it (Cooldown, Prompt injection, Exposed, …).
+Kinds:
 
 - **Built-in:** compiled into Lenstica (`src/lenses/`).
 - **Plugin crate:** a Rust crate implementing `lenstica_lens::Lens`, compiled in
@@ -211,13 +221,13 @@ A **lens** is one focused check. Kinds:
 | `package-managers` | A package manager without the cooldown (minimum release age), a weaker one, or too old to have it; re-applies it automatically | ✅ |
 | `project-settings` | Repository files that lower the cooldown (`.npmrc`, `pnpm-workspace.yaml`, `uv.toml`, …) | ✅ |
 | `package-age` | Locked or installed versions younger than the cooldown, or that young when their lockfile changed | ✅ |
-| `vulnerabilities` | Known vulnerabilities and malicious releases from OSV.dev | ✅ |
-| `aikido-malware` | Packages on Aikido Intel's malware, protestware and telemetry lists | ✅ |
+| `vulnerabilities` | Known vulnerabilities and malicious releases from OSV.dev (opt-in) | ✅ |
+| `aikido-malware` | Packages on Aikido Intel's malware, protestware and telemetry lists (opt-in) | ✅ |
 | `deprecated` | Deprecated (npm) or yanked (PyPI, crates.io) versions | ✅ |
 | `software` | Installed software younger than the cooldown: package managers, Homebrew formulae and casks, Rust toolchains, Node.js | ✅ |
 | `install-scripts` | Package managers that run dependencies' install scripts | ✅ |
 | `homebrew-updates` | Homebrew updating itself before every install | ✅ |
-| `safe-chain` | Whether Aikido Safe Chain is installed and loaded | ✅ |
+| `safe-chain` | Whether Aikido Safe Chain is installed and loaded (opt-in) | ✅ |
 | `secrets` | Credentials on disk: cloud keys, registry tokens, SSH keys without a passphrase, `.env` files, shell history (plugin crate) | ✅ |
 | `agent-instructions` | CLAUDE.md, AGENTS.md, rules, skills, plugins, hooks and MCP configs with hidden text, prompt injection, credential-leak or remote-code instructions, weak agent settings | ✅ |
 
@@ -240,16 +250,17 @@ A **lens** is one focused check. Kinds:
 | Id | Requirement | Status |
 |----|-------------|--------|
 | R-1 | Set a minimum release age (default 7 days, 1–365) in every supported package manager's user-level config, and keep it there | ✅ |
-| R-2 | Turn each package manager and each lens on or off in Settings | ✅ |
+| R-2 | Turn each package manager on or off in Settings, and each lens in its category | ✅ |
 | R-3 | Limit searching to chosen folders (`scan.roots`) and exclude folders or names (`scan.exclude`); include git worktrees | ✅ |
-| R-4 | Every finding: severity, category, title, details, locations, remedy, links, fixable; stable key; notified once | ✅ |
-| R-5 | Menu bar: overall state, every lens with its findings, Fix It, Open file, Copy Prompt for AI Agent, Show in Lenstica; Open Lenstica ⌘O, Settings ⌘,, Quit ⌘Q | ✅ |
-| R-6 | Window: overview, findings with filters and deep links, lenses, settings | ✅ |
+| R-4 | Every finding: severity, category and topic, title, details, locations, remedy, links, fixable; stable key; notified once | ✅ |
+| R-5 | Menu bar: overall state, a submenu per category with its lenses and findings, Fix It, Open file, Copy Prompt for AI Agent, Show in Lenstica; Open Lenstica ⌘O, Settings ⌘,, Quit ⌘Q | ✅ |
+| R-6 | Window: overview, a page per category (its lenses, findings with topic, severity and text filters, deep links), a project picker (All projects, This Mac, each repository), settings; the logo's design in light and dark | ✅ |
 | R-7 | Notifications: on/off, minimum severity, per lens, for automatic fixes; show the app's name and icon | ✅ |
-| R-8 | AI agents: copy a prompt per finding or for all; a skill; an MCP server (status, findings, finding, prompt, run, fix) | ✅ |
+| R-8 | AI agents: copy a prompt per finding or for all, written from templates the user can edit in Settings; a skill; an MCP server (status, findings, finding, prompt, run, fix) | ✅ |
 | R-9 | Start at login on every platform | ✅ |
 | R-10 | Accept a finding: `audit.ignore`, `software.ignore`, `[lenses.<id>] ignore`, advisory ignores | ✅ |
 | R-11 | Install, update and remove third-party lenses safely | 📋 F-10 |
+| R-12 | Lenses that rely on a third party (a service, or a tool they run or recommend) are off until the user turns them on | ✅ |
 | R-12 | Organisation policy that a developer cannot weaken locally | 📋 T-1 |
 
 ### 6.2 Non-functional
@@ -511,7 +522,7 @@ enrolled machine, forced updates within a window.
 | S-2 | Settings UI for `[lenses.agent-instructions] ignore` | 💡 |
 | S-3 | Dedicated Settings page per lens, generated from a lens's declared options | 💡 |
 | S-4 | `lenstica doctor`: explain why a package manager is not configured | 💡 |
-| S-5 | Localisation of the window and notifications | 💡 |
+| S-5 | Localisation: the window, menu bar menu, notifications and the app's messages are translatable, one file per language in `i18n/` ([docs/translating.md](docs/translating.md)); text lenses write and the CLI are still English | 🚧 |
 | S-6 | Remove the migration from `cooldown` after a few releases | 📋 |
 
 ## 9. Work log
@@ -533,6 +544,10 @@ Newest last. Dates are when the work landed in the local build.
 | 2026-11-02 | Renamed to **Lenstica** (checkers are now lenses); new logo; licence changed to Apache 2.0; settings, results and login item migrate automatically; this spec |
 | 2026-11-02 | Published to github.com/lenstica/lenstica (public, Apache 2.0) |
 | 2026-11-03 | Cleaner logo: three overlapping glass lenses on graphite, growing and brightening from left to right, with light where they overlap; all app icons regenerated; the menu bar icon is the same three lenses (outlined while checking) and no longer shows a count |
+| 2026-11-03 | Light, dark or system appearance for the window (`window.appearance`) |
+| 2026-11-03 | Categories: every lens registers with one or more (AI agents, Packages, Software, Secrets, Malware, Network, Privacy), findings carry a category and topic; the window has a page per category with its lenses and findings, a project picker (All projects, This Mac, each repository) and Settings at the bottom; the menu bar menu has a submenu per category; third-party lenses (OSV.dev, Aikido lists, Safe Chain) are opt-in; the window rebuilt on Svelte with design tokens from the logo shared with the menu icons (#33) |
+| 2026-11-03 | Prompt templates: `[prompts]` `finding`, `findings` and `item`, edited in Settings → AI prompts with a live preview; the defaults write the same prompts as before |
+| 2026-11-03 | Window: one component set (every button and field 32px, navigation rows 36px), translatable text with a language setting, WCAG AA text colours, keyboard-navigable findings list; Lighthouse accessibility 100 on every page |
 | 2026-11-03 | Code review pass: state writes serialised (no lost or corrupt `findings.json`), menu built without holding the shared lock, no secret text in agent-lens notes or MCP URLs, OSV fix versions per advisory with real version ordering and pagination, private-registry packages kept off the network, wall-clock scheduling, safer Windows opener, pinned release workflow; shared helpers replace duplicated code |
 
 ## 10. Decisions
@@ -549,6 +564,12 @@ Newest last. Dates are when the work landed in the local build.
 | D-8 | 2026-11-02 | Paid features gated by licence key in the same binary | Seamless upgrade; one codebase to test; no fork |
 | D-9 | 2026-11-02 | Contributions under the DCO, not a CLA (proposed) | Apache 2.0 inbound = outbound is enough for a separate proprietary add-on; lower friction for contributors |
 | D-10 | 2026-11-02 | Bundle id `com.lenstica.app`, login item `com.lenstica.agent` | Reverse-DNS of the owned domain |
+| D-11 | 2026-11-03 | The window and menu are organised by category, not by lens; lenses register with categories, findings carry a category and a free-form topic | Users think in risks (my agents, my packages, my secrets), not in checks; one lens can cover several (OSV: vulnerabilities and malware) |
+| D-12 | 2026-11-03 | Third-party lenses are opt-in, OSV.dev included | Nothing about the user's packages leaves the machine for a third party, and no third-party tool is recommended, without their say |
+| D-13 | 2026-11-03 | Window on Svelte 5 + Vite + Tailwind CSS v4 + Bits UI; the build output in `assets/ui/` is committed | Components and one design system (#33); committed output keeps `cargo install` and `cargo tauri build` free of Node; npm dependencies held to the 7-day cooldown by pnpm |
+| D-14 | 2026-11-03 | The project picker only filters what the window shows; findings are attributed to projects by their locations' paths | No change to how lenses run; a finding in several repositories shows in each, with that repository's locations |
+| D-15 | 2026-11-03 | Prompt templates use a small Mustache subset (`{{name}}`, `{{#name}}…{{/name}}`, `{{^name}}…{{/name}}`), written in-house | Enough for optional lines; no template-engine dependency; a mistake is refused when saved rather than producing a broken prompt |
+| D-16 | 2026-11-03 | The app's text lives in one JSON file per language (`i18n/`), shared by the window (`t()`, plurals by `Intl.PluralRules`) and Rust (`t!`, CLDR integer rules in `src/i18n.rs`); English is source and fallback; no i18n library | One file to add a language; the window's keys are type-checked against English, and a test checks every translation's keys, shapes and placeholders; no dependency |
 
 ## 11. Open questions
 

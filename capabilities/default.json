@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The Lenstica window: listen for state and toast events. The app's own commands (`action`, `get_state`, `list_repos`) are allowed by default.",
+  "description": "The Lenstica window: listen for state and toast events, and move the window by its top bar (drag, double-click to zoom). The app's own commands (`action`, `get_state`, `list_repos`, `preview_prompt`) are allowed by default.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize"]
 }

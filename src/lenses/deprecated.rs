@@ -3,7 +3,7 @@
 //! times; re-checked weekly.
 
 use anyhow::Result;
-use lenstica_lens::{Context, Finding, Lens, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Report, Severity, topic};
 
 use super::shared;
 use crate::audit::{
@@ -24,6 +24,9 @@ impl Lens for Deprecated {
     }
     fn description(&self) -> &str {
         "Locked and installed versions marked deprecated on npm or yanked on PyPI or crates.io, usually because they are broken, unmaintained or replaced."
+    }
+    fn categories(&self) -> &[Category] {
+        &[Category::Packages]
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
@@ -59,9 +62,10 @@ impl Lens for Deprecated {
             let mut f = Finding::new(
                 format!("{kind}|{}|{}|{}", pkg.eco.label(), pkg.name, pkg.version),
                 severity,
-                "deprecated",
+                Category::Packages,
                 format!("{} {} is {kind}", pkg.name, pkg.version),
             )
+            .topic(topic::DEPRECATED)
             .detail(message.to_string())
             .remedy(if kind == "yanked" {
                 "Its maintainers pulled this release; move to another version."

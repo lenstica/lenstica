@@ -20,10 +20,14 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use anyhow::Result;
 use serde_json::{Value, json};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Manager, RunEvent, Theme, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+};
+
+use lenstica_lens::Category;
 
 use crate::autostart;
-use crate::config::{self, Config};
+use crate::config::{self, Appearance, Config};
 use crate::lenses::{self, store::RunResult};
 use crate::paths;
 use crate::system::{self, InstanceLock};
@@ -47,6 +51,8 @@ pub struct Shared {
     pub running: BTreeSet<String>,
     /// Tray menu item id -> what clicking it does; rebuilt with the menu.
     pub clicks: HashMap<String, menu::Click>,
+    /// The appearance last applied, so it is set again only when it changes.
+    pub appearance: Option<Appearance>,
 }
 
 pub struct AppState {
@@ -75,14 +81,21 @@ impl AppState {
     }
 }
 
-// `generate_context!` embeds `assets/ui`, but the compiler does not see those
-// files as inputs, so an edit to the page alone would ship the old one.
-// Including them makes any change rebuild the crate and re-embed the page.
+// `generate_context!` embeds `assets/ui` (built from `ui/` by `pnpm build`),
+// but the compiler does not see those files as inputs, so a rebuilt page alone
+// would ship the old one. Including them makes any change rebuild the crate.
 const _: &[u8] = include_bytes!("../../assets/ui/index.html");
 const _: &[u8] = include_bytes!("../../assets/ui/app.js");
+const _: &[u8] = include_bytes!("../../assets/ui/app.css");
 
-/// The window's pages, as `lenstica window <page>` and the page's `#hash` name them.
-pub const PAGES: [&str; 4] = ["overview", "findings", "lenses", "settings"];
+/// The window's pages, as `lenstica window <page>` and the page's `#hash` name
+/// them: the overview, one per category, and settings.
+pub fn pages() -> Vec<&'static str> {
+    let mut all = vec!["overview"];
+    all.extend(Category::ALL.map(Category::id));
+    all.push("settings");
+    all
+}
 
 /// What a second launch asked for: its arguments after the program name.
 fn hand_over(app: &AppHandle, args: &[String]) {
@@ -94,7 +107,7 @@ fn hand_over(app: &AppHandle, args: &[String]) {
     match args.as_slice() {
         // Opening the app again (Finder, Spotlight, Explorer) shows the window.
         [] | ["window"] => show_window(app),
-        ["window", page] if PAGES.contains(&page.split_once('/').map_or(*page, |(p, _)| p)) => {
+        ["window", page] if pages().contains(&page.split_once('/').map_or(*page, |(p, _)| p)) => {
             show_page(app, page);
         }
         _ => {}
@@ -124,11 +137,14 @@ pub fn run(open_window: Option<String>) -> Result<()> {
         .invoke_handler(tauri::generate_handler![
             commands::action,
             commands::get_state,
-            commands::list_repos
+            commands::list_repos,
+            commands::preview_prompt,
+            commands::prompt_text
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            apply_appearance(app.handle());
             menu::create(app.handle())?;
             match system::acquire_lock()? {
                 Some(lock) => {
@@ -177,7 +193,7 @@ pub fn show_window(app: &AppHandle) {
     open_at(app, None);
 }
 
-/// Open the window on one page (`overview`, `findings`, `lenses`, `settings`).
+/// Open the window on one page (`overview`, a category such as `packages`, `settings`).
 pub fn show_page(app: &AppHandle, page: &str) {
     open_at(app, Some(page));
 }
@@ -200,25 +216,41 @@ fn open_at(app: &AppHandle, page: Option<&str>) {
         Some(page) => format!("index.html#{page}"),
         None => "index.html".to_string(),
     };
-    let built = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(url.into()))
+    let builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(url.into()))
         .title("Lenstica")
+        .theme(apply_appearance(app))
         .inner_size(1180.0, 780.0)
-        .min_inner_size(880.0, 560.0)
-        .build();
+        .min_inner_size(880.0, 560.0);
+    // macOS: no separate title bar. The page runs to the top of the window and
+    // its own top bar holds the window buttons, as in Zed and Orca.
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(
+            TRAFFIC_LIGHTS.0,
+            TRAFFIC_LIGHTS.1,
+        ));
+    let built = builder.build();
     match built {
         Ok(window) => {
             let _ = window.set_focus();
         }
-        Err(e) => notify_error(&format!("cannot open the window: {e}")),
+        Err(e) => notify_error(&crate::i18n::t!("notify.windowFailed", error = e)),
     }
 }
 
-/// Open the window on the findings page with one finding selected.
-pub fn show_finding(app: &AppHandle, lens: &str, key: &str) {
+/// Where the window buttons sit (left, top), centred in the page's 40px top bar.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS: (f64, f64) = (16.0, 22.5);
+
+/// Open the window on a finding's category with the finding selected.
+pub fn show_finding(app: &AppHandle, category: Category, lens: &str, key: &str) {
     open_at(
         app,
         Some(&format!(
-            "findings/{}",
+            "{}/{}",
+            category.id(),
             url_encode(&format!("{lens}|{key}"))
         )),
     );
@@ -240,6 +272,26 @@ fn url_encode(text: &str) -> String {
 /// either one finding's key or `None` for all of that lens's alerts.
 pub fn copy_prompt(app: &AppHandle, items: &[(String, Option<String>)]) -> Result<()> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
+    let (text, count) = prompt_text(app, items)?;
+    app.clipboard()
+        .write_text(text)
+        .map_err(|e| anyhow::anyhow!("cannot copy to the clipboard: {e}"))?;
+    toast(
+        app,
+        if count == 1 {
+            crate::i18n::t!("toast.copiedOne")
+        } else {
+            crate::i18n::t!("toast.copiedMany", count = count)
+        },
+        true,
+    );
+    Ok(())
+}
+
+/// The prompt for these findings, written with the user's templates, and how
+/// many findings it covers. Each item is a lens and one finding's key, or
+/// `None` for all of that lens's alerts.
+pub fn prompt_text(app: &AppHandle, items: &[(String, Option<String>)]) -> Result<(String, usize)> {
     let cfg = Config::load()?;
     let results = {
         let shared = app.state::<AppState>();
@@ -254,25 +306,13 @@ pub fn copy_prompt(app: &AppHandle, items: &[(String, Option<String>)]) -> Resul
     if pairs.is_empty() {
         anyhow::bail!("those findings are no longer reported");
     }
-    app.clipboard()
-        .write_text(crate::prompt::for_findings(&pairs))
-        .map_err(|e| anyhow::anyhow!("cannot copy to the clipboard: {e}"))?;
-    toast(
-        app,
-        if pairs.len() == 1 {
-            "Copied a prompt for your AI agent".to_string()
-        } else {
-            format!("Copied a prompt covering {} findings", pairs.len())
-        },
-        true,
-    );
-    Ok(())
+    Ok((crate::prompt::for_findings(&cfg, &pairs), pairs.len()))
 }
 
 pub fn notify_error(text: &str) {
     eprintln!("lenstica: {text}");
     if Config::load().map(|c| c.monitor.notify).unwrap_or(true) {
-        let _ = crate::notify::send("Lenstica", text);
+        let _ = crate::notify::send(&crate::i18n::t!("notify.title"), text);
     }
 }
 
@@ -298,6 +338,8 @@ fn state(app: &AppHandle) -> Value {
                 "title": r.lens.title(),
                 "description": r.lens.description(),
                 "origin": r.origin.label(),
+                "categories": r.lens.categories(),
+                "thirdParty": r.lens.third_party(),
                 "enabled": lenses::enabled(&cfg, r),
                 "notify": lenses::notifies(&cfg, r.id()),
                 "intervalMinutes": lenses::interval(&cfg, r).as_secs() / 60,
@@ -310,8 +352,46 @@ fn state(app: &AppHandle) -> Value {
         .iter()
         .map(|m| json!({ "id": m.id(), "name": m.name(), "enabled": cfg.is_enabled(m.id()) }))
         .collect();
+    // Every category with its topics; the window shows those some lens covers.
+    let categories: Vec<Value> = Category::ALL
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.id(),
+                "title": c.title(),
+                "description": c.description(),
+                "topics": c.topics().iter().map(|(id, title)| json!({ "id": id, "title": title })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let values = |lists: &[&[(&str, &str)]]| -> Vec<Value> {
+        lists
+            .iter()
+            .flat_map(|l| l.iter())
+            .map(|(name, about)| json!({ "name": name, "about": about }))
+            .collect()
+    };
+    use crate::prompt;
     json!({
         "version": env!("CARGO_PKG_VERSION"),
+        "repository": env!("CARGO_PKG_REPOSITORY"),
+        // macOS draws its window buttons over the page's top bar.
+        "platform": std::env::consts::OS,
+        "systemLanguages": crate::i18n::system_languages(),
+        "categories": categories,
+        // Lenstica's own prompt templates, and what each can insert.
+        "prompts": {
+            "defaults": {
+                "finding": prompt::DEFAULT_FINDING,
+                "findings": prompt::DEFAULT_FINDINGS,
+                "item": prompt::DEFAULT_ITEM,
+            },
+            "values": {
+                "finding": values(&[prompt::FINDING_VALUES]),
+                "item": values(&[prompt::FINDING_VALUES, prompt::ITEM_VALUES]),
+                "findings": values(&[prompt::FINDINGS_VALUES]),
+            },
+        },
         "managers": managers,
         "agent": {
             "skillInstalled": crate::agent::skill_installed(),
@@ -329,9 +409,39 @@ fn state(app: &AppHandle) -> Value {
     })
 }
 
+/// Light or dark, as `window.appearance` says; while the settings file is
+/// broken, the last good one. Returns the theme for a new window (`None`
+/// follows the system). The title bar follows it, and the page's
+/// `prefers-color-scheme` with it.
+fn apply_appearance(app: &AppHandle) -> Option<Theme> {
+    let state = app.state::<AppState>();
+    let appearance = match Config::load() {
+        Ok(cfg) => {
+            // The menu, notifications and messages to the window speak the chosen language.
+            crate::i18n::choose(&cfg.window.language);
+            let wanted = cfg.window.appearance;
+            if state.lock().appearance.replace(wanted) != Some(wanted) {
+                app.set_theme(theme(wanted));
+            }
+            wanted
+        }
+        Err(_) => state.lock().appearance.unwrap_or_default(),
+    };
+    theme(appearance)
+}
+
+fn theme(appearance: Appearance) -> Option<Theme> {
+    match appearance {
+        Appearance::System => None,
+        Appearance::Light => Some(Theme::Light),
+        Appearance::Dark => Some(Theme::Dark),
+    }
+}
+
 /// Rebuild the tray and, if the window is open, send it fresh state.
 pub fn refresh(app: &AppHandle) {
     menu::refresh(app);
+    apply_appearance(app);
     if app.get_webview_window("main").is_some() {
         let _ = app.emit("state", state(app));
     }

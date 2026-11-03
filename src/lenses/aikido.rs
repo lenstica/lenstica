@@ -12,7 +12,9 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context as _, Result};
-use lenstica_lens::{Context, Ecosystem, Finding, Lens, Package, Report, Severity, Source};
+use lenstica_lens::{
+    Category, Context, Ecosystem, Finding, Lens, Package, Report, Severity, Source, topic,
+};
 use serde::Deserialize;
 
 use super::shared::{self, MALWARE_REMEDY, normalise_name};
@@ -127,8 +129,16 @@ impl Listing {
         }
     }
 
-    /// The finding category, and the key namespace.
-    fn category(self) -> &'static str {
+    /// Where the finding goes: its category and topic.
+    fn placement(self) -> (Category, &'static str) {
+        match self {
+            Self::Malware | Self::Protestware => (Category::Malware, ""),
+            Self::Telemetry => (Category::Privacy, topic::TELEMETRY),
+        }
+    }
+
+    /// The key namespace.
+    fn namespace(self) -> &'static str {
         match self {
             Self::Malware | Self::Protestware => "malware",
             Self::Telemetry => "telemetry",
@@ -158,13 +168,13 @@ fn finding(pkg: &Package, reason: &str, sources: &[&Source]) -> Finding {
     let mut f = Finding::new(
         format!(
             "{}|{}|{}|{}",
-            listing.category(),
+            listing.namespace(),
             pkg.ecosystem.label(),
             pkg.name,
             pkg.version
         ),
         listing.severity(),
-        listing.category(),
+        listing.placement().0,
         format!(
             "{}: {} {} ({})",
             listing.title(),
@@ -173,6 +183,7 @@ fn finding(pkg: &Package, reason: &str, sources: &[&Source]) -> Finding {
             pkg.ecosystem.label()
         ),
     )
+    .topic(listing.placement().1)
     .detail(format!(
         "Listed as {reason} by Aikido Intel ({BASE}/{}).",
         list_file(pkg.ecosystem)
@@ -193,6 +204,12 @@ impl Lens for AikidoMalware {
     }
     fn description(&self) -> &str {
         "Locked and installed npm and PyPI packages on Aikido Intel's malware, protestware and telemetry lists, the lists Aikido Safe Chain blocks downloads with. The lists are downloaded whole, so no package names are sent."
+    }
+    fn categories(&self) -> &[Category] {
+        &[Category::Malware, Category::Privacy]
+    }
+    fn third_party(&self) -> Option<&str> {
+        Some("Downloads Aikido Security's malware, protestware and telemetry lists.")
     }
 
     fn run(&self, cx: &Context) -> Result<Report> {
@@ -250,7 +267,10 @@ impl Lens for AikidoMalware {
             0,
             format!("{checked} npm and PyPI packages compared with {listed} listed package names"),
         );
-        let bad = findings.iter().filter(|f| f.category == "malware").count();
+        let bad = findings
+            .iter()
+            .filter(|f| f.category == Category::Malware)
+            .count();
         Ok(Report {
             summary: format!(
                 "{bad} malicious or protestware packages, {} with telemetry, among {checked} checked",

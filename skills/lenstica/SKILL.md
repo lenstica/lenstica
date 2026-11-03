@@ -22,8 +22,8 @@ lenstica prompt <lens> '<key>'        # the brief for one finding
 ```
 
 Each finding has `lens`, `key`, `severity` (info, low, medium, high,
-critical), `category` (malware, vulnerability, secret, cooldown, deprecated,
-settings, agent, telemetry), `title`, `detail`, `locations` (label, path, line), `remedy`,
+critical), `category` (agents, packages, software, secrets, malware, network,
+privacy) and `topic` within it, `title`, `detail`, `locations` (label, path, line), `remedy`,
 `links` and `fixable`. `lenstica lenses` lists the lens ids.
 
 ## Act on it

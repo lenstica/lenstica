@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{Context as _, Result, bail};
-use lenstica_lens::{Context, Finding, Lens, Location, Report, Severity};
+use lenstica_lens::{Category, Context, Finding, Lens, Location, Report, Severity, topic};
 
 use crate::config::Config;
 use crate::files;
@@ -50,9 +50,10 @@ fn finding(m: &ManagerStatus, days: u32) -> Finding {
             m.current.as_deref().unwrap_or("")
         ),
         severity,
-        "cooldown",
+        Category::Packages,
         title(m, days),
     )
+    .topic(topic::COOLDOWN)
     .detail(format!("{} in {}: {}", m.setting, m.location, describe(m)))
     .remedy(remedy)
     .at(Location::file(m.location.clone(), m.path.clone()));
@@ -105,6 +106,9 @@ impl Lens for Managers {
     fn description(&self) -> &str {
         "Each package manager's own minimum-release-age setting, re-applied automatically when it is missing or weaker."
     }
+    fn categories(&self) -> &[Category] {
+        &[Category::Packages]
+    }
 
     fn run(&self, cx: &Context) -> Result<Report> {
         let cfg = Config::load()?;
@@ -150,9 +154,10 @@ impl Lens for Managers {
             let mut f = Finding::new(
                 format!("unsupported|{}", names.join(",")),
                 Severity::Info,
-                "cooldown",
+                Category::Packages,
                 format!("Not covered: {}", names.join(", ")),
             )
+            .topic(topic::COOLDOWN)
             .detail(
                 unsupported
                     .iter()

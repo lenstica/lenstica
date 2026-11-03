@@ -7,9 +7,9 @@
 
 ## The menu
 
-A Lucide package icon in the menu bar: `package-check` when nothing needs
-attention, an orange `package-x` with a count when something does, and
-`package-search` while the first checks run.
+The logo's three lenses in the menu bar: solid when nothing needs attention,
+solid orange when something does (the tooltip gives the count), and outlined
+while the first checks run.
 
 The menu lists every lens with a coloured dot: green when clear, the colour of
 its worst finding when not, blue while running, hollow before its first run.

@@ -1,5 +1,6 @@
-//! Menu bar icons from Lucide (https://lucide.dev, ISC licence, see
-//! `assets/lucide/LICENSE`), rendered from their SVG source at start-up.
+//! Menu bar icons, rendered from their SVG source at start-up. The tray glyph
+//! is the logo's three lenses (`assets/lenses*.svg`); menu item icons are from
+//! Lucide (https://lucide.dev, ISC licence, see `assets/lucide/LICENSE`).
 //!
 //! On macOS the normal icons are template images (black on alpha) that the
 //! system recolours to match the menu bar. The problem icon is a fixed orange
@@ -13,27 +14,26 @@ use resvg::{tiny_skia, usvg};
 /// 18 pt tall, so this is a ~2.4x (Retina) image.
 pub const SIZE: u32 = 44;
 
-/// Share of the canvas the 24-unit Lucide view box spans. The whole canvas is
-/// shown at 18 pt and Lucide keeps its own ~1.5-unit margin, so filling the
+/// Share of the canvas the 24-unit view box spans. The whole canvas is shown at
+/// 18 pt and the glyph keeps a ~1.5-unit margin, like Lucide, so filling the
 /// canvas gives a ~16 pt glyph, the size of the neighbouring status icons.
 const ICON_SCALE: f32 = 1.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Glyph {
-    /// Every lens is clear: a lens with a check (`search-check`).
+    /// Every lens is clear: the three lenses, solid.
     Protected,
-    /// A lens found something that needs attention: a lens with a cross (`search-x`), in orange.
+    /// A lens found something that needs attention: the three lenses, solid, in orange.
     Problem,
-    /// No result yet: an empty lens (`search`).
+    /// No result yet: the three lenses in outline.
     Checking,
 }
 
 impl Glyph {
     fn svg(self) -> &'static str {
         match self {
-            Glyph::Protected => include_str!("../assets/lucide/search-check.svg"),
-            Glyph::Problem => include_str!("../assets/lucide/search-x.svg"),
-            Glyph::Checking => include_str!("../assets/lucide/search.svg"),
+            Glyph::Protected | Glyph::Problem => include_str!("../assets/lenses.svg"),
+            Glyph::Checking => include_str!("../assets/lenses-outline.svg"),
         }
     }
 

@@ -1,31 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Lenstica: a library of lenses. Three coloured lenses fan out behind the
-       one you look through; inside it, a shield with a check. -->
+  <!-- Lenstica: a library of lenses. Three glass lenses on graphite, growing
+       and brightening from left to right; light builds up where they overlap. -->
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#1e1b4b"/>
-      <stop offset="1" stop-color="#0b1020"/>
+    <!-- the rim catches light at the top left and again at the bottom right -->
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.9"/>
+      <stop offset="0.5" stop-color="#fff" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0.55"/>
     </linearGradient>
-    <radialGradient id="glass" cx="0.38" cy="0.34" r="0.75">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/>
-    </radialGradient>
+    <clipPath id="small"><path d="M394.5 347.0C409.1 347.0 463.8 413.0 463.8 512C463.8 611.0 409.1 677.0 394.5 677.0C380.0 677.0 325.2 611.0 325.2 512C325.2 413.0 380.0 347.0 394.5 347.0Z"/></clipPath>
+    <clipPath id="middle"><path d="M483.9 304.5C502.2 304.5 571.1 387.5 571.1 512C571.1 636.5 502.2 719.5 483.9 719.5C465.7 719.5 396.8 636.5 396.8 512C396.8 387.5 465.7 304.5 483.9 304.5Z"/></clipPath>
+    <clipPath id="large"><path d="M593.8 262.0C615.8 262.0 698.8 362.0 698.8 512C698.8 662.0 615.8 762.0 593.8 762.0C571.8 762.0 488.8 662.0 488.8 512C488.8 362.0 571.8 262.0 593.8 262.0Z"/></clipPath>
   </defs>
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-  <g transform="translate(22 26)">
-  <!-- the lens library: rings fanned behind the front lens -->
-  <circle cx="372" cy="402" r="196" fill="none" stroke="#2dd4bf" stroke-width="40" opacity="0.9"/>
-  <circle cx="418" cy="372" r="196" fill="none" stroke="#fbbf24" stroke-width="40" opacity="0.9"/>
-  <circle cx="470" cy="360" r="196" fill="none" stroke="#fb7185" stroke-width="40" opacity="0.9"/>
-  <!-- the lens you look through -->
-  <line x1="612" y1="612" x2="790" y2="790" stroke="#ffffff" stroke-width="84" stroke-linecap="round"/>
-  <circle cx="470" cy="470" r="210" fill="#0f1430"/>
-  <circle cx="470" cy="470" r="210" fill="url(#glass)" stroke="#ffffff" stroke-width="56"/>
-  <!-- shield with a check -->
-  <path d="M470 346 L566 384 V468 C566 530 526 574 470 598 C414 574 374 530 374 468 V384 Z"
-        fill="none" stroke="#ffffff" stroke-width="30" stroke-linejoin="round"/>
-  <path d="M424 474 L458 508 L520 444" fill="none" stroke="#2dd4bf" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- glint -->
-  <path d="M352 420 A130 130 0 0 1 420 352" fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="round" opacity="0.55"/>
-  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#1c1c1e"/>
+  <!-- the lenses -->
+  <path d="M394.5 347.0C409.1 347.0 463.8 413.0 463.8 512C463.8 611.0 409.1 677.0 394.5 677.0C380.0 677.0 325.2 611.0 325.2 512C325.2 413.0 380.0 347.0 394.5 347.0Z" fill="#fff" fill-opacity="0.18"/>
+  <path d="M483.9 304.5C502.2 304.5 571.1 387.5 571.1 512C571.1 636.5 502.2 719.5 483.9 719.5C465.7 719.5 396.8 636.5 396.8 512C396.8 387.5 465.7 304.5 483.9 304.5Z" fill="#fff" fill-opacity="0.29"/>
+  <path d="M593.8 262.0C615.8 262.0 698.8 362.0 698.8 512C698.8 662.0 615.8 762.0 593.8 762.0C571.8 762.0 488.8 662.0 488.8 512C488.8 362.0 571.8 262.0 593.8 262.0Z" fill="#fff" fill-opacity="0.4"/>
+  <!-- glass edges: a faint band inside each rim (its thickness), then the rim -->
+  <path d="M394.5 347.0C409.1 347.0 463.8 413.0 463.8 512C463.8 611.0 409.1 677.0 394.5 677.0C380.0 677.0 325.2 611.0 325.2 512C325.2 413.0 380.0 347.0 394.5 347.0Z" clip-path="url(#small)" fill="none" stroke="#fff" stroke-opacity="0.18" stroke-width="24"/>
+  <path d="M394.5 347.0C409.1 347.0 463.8 413.0 463.8 512C463.8 611.0 409.1 677.0 394.5 677.0C380.0 677.0 325.2 611.0 325.2 512C325.2 413.0 380.0 347.0 394.5 347.0Z" fill="none" stroke="url(#rim)" stroke-width="6"/>
+  <path d="M483.9 304.5C502.2 304.5 571.1 387.5 571.1 512C571.1 636.5 502.2 719.5 483.9 719.5C465.7 719.5 396.8 636.5 396.8 512C396.8 387.5 465.7 304.5 483.9 304.5Z" clip-path="url(#middle)" fill="none" stroke="#fff" stroke-opacity="0.18" stroke-width="24"/>
+  <path d="M483.9 304.5C502.2 304.5 571.1 387.5 571.1 512C571.1 636.5 502.2 719.5 483.9 719.5C465.7 719.5 396.8 636.5 396.8 512C396.8 387.5 465.7 304.5 483.9 304.5Z" fill="none" stroke="url(#rim)" stroke-width="6"/>
+  <path d="M593.8 262.0C615.8 262.0 698.8 362.0 698.8 512C698.8 662.0 615.8 762.0 593.8 762.0C571.8 762.0 488.8 662.0 488.8 512C488.8 362.0 571.8 262.0 593.8 262.0Z" clip-path="url(#large)" fill="none" stroke="#fff" stroke-opacity="0.18" stroke-width="24"/>
+  <path d="M593.8 262.0C615.8 262.0 698.8 362.0 698.8 512C698.8 662.0 615.8 762.0 593.8 762.0C571.8 762.0 488.8 662.0 488.8 512C488.8 362.0 571.8 262.0 593.8 262.0Z" fill="none" stroke="url(#rim)" stroke-width="6"/>
 </svg>

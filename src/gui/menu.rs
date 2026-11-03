@@ -474,7 +474,6 @@ fn try_refresh(app: &AppHandle) -> Result<()> {
     };
     tray.set_menu(Some(menu))?;
     tray.set_icon_with_as_template(Some(image(glyph)), glyph.is_template())?;
-    tray.set_title((!alerts.is_empty()).then(|| alerts.len().to_string()))?;
     tray.set_tooltip(Some(tooltip))?;
     Ok(())
 }

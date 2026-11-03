@@ -303,7 +303,7 @@ A **lens** is one focused check. Kinds:
 - **Prefer crates already in `Cargo.lock`** over new ones.
 - **No unrequested side effects** on the user's machine (installing skills,
   registering MCP servers, changing settings); offer them instead.
-- **Keep the README and this file current** with every user-visible change.
+- **Keep the README, `docs/` and this file current** with every user-visible change.
 
 ### 7.3 Commands
 

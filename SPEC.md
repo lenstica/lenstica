@@ -245,6 +245,9 @@ Kinds:
 | `git-hooks` | [L-7](#l-7-git-hooks): repository hooks and `core.hooksPath` running downloaded code | 💡 |
 | `connections` | [L-8](#l-8-network-connections): established outbound connections to addresses on threat-intel blocklists | 💡 |
 | `outbound-firewall` | [L-9](#l-9-firewalls): the OS firewall, and an open-source outbound firewall (LuLu, OpenSnitch, simplewall) installed and running | 💡 |
+| `system-settings` | [L-10](#l-10-system-settings): disk encryption, system integrity protection, app verification, automatic security updates and screen lock turned off | 💡 |
+| `startup-items` | [L-11](#l-11-startup-items): launch agents, launch daemons and login items that are new, unsigned, or run code from temporary folders, Downloads or a URL | 💡 |
+| `tool-telemetry` | [L-12](#l-12-developer-tool-telemetry): developer tools sending usage data (Homebrew, Next.js, .NET, Azure CLI, VS Code, …) | 💡 |
 
 ## 6. Requirements
 
@@ -422,6 +425,45 @@ simplewall (Windows). Offer to install one, as part of making open-source
 security tools one click. osquery, Zeek and Suricata are later, opt-in
 options for people who want deeper monitoring: they need administrator
 rights or a network sensor.
+
+#### L-10 System settings
+💡 The operating system's own protections, all readable without
+administrator rights on macOS: FileVault off (`fdesetup status`, Privacy),
+System Integrity Protection off (`csrutil status`, Malware), Gatekeeper off
+(`spctl --status`, Malware), XProtect definitions not updated recently
+(`XProtect.bundle`'s version and modification date, Software), automatic
+security and macOS updates off
+(`/Library/Preferences/com.apple.SoftwareUpdate`, Software → Auto updates),
+and no password soon after sleep or the screen saver
+(`sysadminctl -screenLock status`, Privacy). The firewall belongs to
+[L-9](#l-9-firewalls). Remedies open the right System Settings pane; nothing
+is changed for the user. Windows (BitLocker, Defender, Windows Update) and
+Linux (LUKS, unattended upgrades) later. The same checks are the device
+evidence compliance audits ask for, so the team edition reports them as they
+are ([T-3](#t-3-compliance-and-audit-logs)).
+
+#### L-11 Startup items
+💡 What starts on its own is where malware stays. `~/Library/LaunchAgents`,
+`/Library/LaunchAgents`, `/Library/LaunchDaemons`, and login and background
+items from `sfltool dumpbtm` (which works without root). Report items that
+are new since the last run, whose program is unsigned or ad-hoc signed
+(`codesign`), or that run from `/tmp`, `/Users/Shared`, Downloads, or a
+shell or script interpreter fetching a URL. Signed items from known vendors
+pass. Category Malware, a new topic "Startup items". Remedy: what the item
+runs and how to remove it (`launchctl bootout`, delete the plist).
+
+#### L-12 Developer tool telemetry
+💡 Developer tools that send usage data unless told not to: Homebrew
+analytics (`brew analytics`), Next.js, Gatsby, Astro, Turborepo, Vercel CLI,
+Wrangler, .NET CLI, Azure CLI, VS Code and Cursor
+(`telemetry.telemetryLevel`), and Go only when set to `on` (the default,
+`local`, uploads nothing). Only for tools that are installed. Each tool's own
+setting is in a config file or an environment variable; the app runs as a
+login item and does not see variables exported in shell profiles, so read
+`export` lines from `~/.zshrc`, `~/.zprofile`, `~/.bashrc` and fish config,
+and honour `DO_NOT_TRACK=1` where the tool does. Category Privacy, topic
+Telemetry. Remedy: the tool's own opt-out command; offering to apply it, as
+the package-managers lens applies the cooldown, is a later step.
 
 ### 8.3 The lens ecosystem
 

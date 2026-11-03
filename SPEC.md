@@ -329,7 +329,7 @@ each platform and attaches them to a draft release. Versioning: semantic,
 ### 8.1 Next up (free edition)
 
 #### F-1 Publish the repository
-📋 Push to `github.com/lenstica/lenstica`, enable CI (tests, clippy,
+🚧 Pushed to `github.com/lenstica/lenstica` (public, `main`, 2026-11-02). Still to do: CI (tests, clippy,
 cross-checks on every PR), branch protection, issue templates, `CONTRIBUTING.md`
 with the DCO ([D-9](#10-decisions)), `SECURITY.md` with a disclosure address
 at lenstica.com.
@@ -533,6 +533,7 @@ Newest last. Dates are when the work landed in the local build.
 | 2026-11-02 | Agent-instructions lens (hidden text, injection phrasing, credential leaks, remote code, weak agent settings; fix strips invisible characters) |
 | 2026-11-02 | Notifications carry the app icon (posted as the installed app); `lenstica test-notification` and Settings → Send a test |
 | 2026-11-02 | Renamed to **Lenstica** (checkers are now lenses); new logo; licence changed to Apache 2.0; settings, results and login item migrate automatically; this spec |
+| 2026-11-02 | Published to github.com/lenstica/lenstica (public, Apache 2.0) |
 
 ## 10. Decisions
 

@@ -133,6 +133,22 @@ pub async fn list_listening() -> Result<Value, String> {
     ))
 }
 
+/// What is on this machine, for the sidebar's Assets: every kind, or only
+/// `kinds` (`identities`, `virtual-machines`). Async: it runs listing tools.
+#[tauri::command]
+pub async fn list_assets(kinds: Option<Vec<String>>) -> Result<Value, String> {
+    use crate::assets::{self, Kind};
+    let cfg = Config::load().map_err(|e| format!("{e:#}"))?;
+    let kinds: Vec<Kind> = match kinds {
+        Some(ids) => ids
+            .iter()
+            .map(|id| Kind::from_id(id).ok_or_else(|| format!("unknown kind `{id}`")))
+            .collect::<Result<_, _>>()?,
+        None => Kind::ALL.to_vec(),
+    };
+    serde_json::to_value(assets::discover(&cfg, &kinds)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn action(app: AppHandle, msg: Value) -> Result<(), String> {
     if super::debug() {
@@ -204,6 +220,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             }
         }
         "openUrl" => system::open_url(str_field(msg, "url")?)?,
+        "openFullDiskAccess" => system::open_full_disk_access()?,
         "openConfig" => system::open(&config::ensure_exists()?)?,
         "ignorePackage" => {
             let entry = str_field(msg, "entry")?;

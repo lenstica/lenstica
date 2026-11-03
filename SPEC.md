@@ -154,6 +154,7 @@ lenstica (one binary: CLI + menu bar app + MCP server)
 ├── crates/lenstica-lens      public lens API: Finding, Report, Context, Lens trait
 ├── crates/lenstica-secrets   the secrets lens, a plugin crate built on that API
 ├── src/lenses/               built-in lenses, registry, runner, result store
+├── src/assets/               what is on the machine: identities, repositories, applications, containers, virtual machines, extensions
 ├── src/managers/             package-manager adapters (npm, pnpm, Yarn, Bun, uv, pip, Poetry, Cargo)
 ├── src/audit/                lockfile and global-install inventory, registry publish times
 ├── src/gui/                  tray menu, window (Tauri), scheduler
@@ -196,6 +197,37 @@ lenstica (one binary: CLI + menu bar app + MCP server)
 macOS (primary, tested on the author's machine), Windows and Linux (compile
 checks in development; native bundles built by `.github/workflows/release.yml`).
 Headless Linux runs `lenstica watch` as a systemd user service.
+
+### 4.5 Assets
+
+Lenses say what is risky; **assets** say what there is. `src/assets/` lists,
+on demand, six kinds: **identities** (git's author, SSH keys, and the accounts
+signed in to the GitHub CLI, AWS, Google Cloud, Azure, Kubernetes, Docker
+registries, npm, PyPI, Cargo, `.netrc`, Claude Code and Codex), **repositories**
+(the project picker's, with remote, branch and worktrees), **applications**
+(macOS app bundles with their source: App Store, Homebrew, Apple; Linux
+desktop entries), **containers** (Docker's current context and Podman),
+**virtual machines** (Lima, Colima, Podman, Multipass, Tart, Parallels,
+VirtualBox, VMware Fusion, UTM, Vagrant) and **extensions** (VS Code and its
+forks, Zed, Chromium browsers per profile, Firefox).
+
+- **Read only, local only.** Files are read and listing commands run
+  (`docker ps`, `limactl list`); nothing is started, changed or sent.
+- **Names, never secrets.** An identity is an account's name and where its
+  key is kept; a token, password or private key is never kept, only that one
+  is in a plain file (tag `credentialsInFile`).
+- **Not stored.** Each look is fresh: when the window opens, when an asset
+  page opens, on Look again, and from `lenstica assets` or the MCP server's
+  `lenstica_assets`.
+- **Linked to findings.** The window shows, per asset, the findings with a
+  location in its file or folder (a repository: its project's findings).
+- **What macOS protects.** Browser profiles are readable only with Full Disk
+  Access; without it the page says which sources were left out and opens the
+  setting. Another app's sandbox (UTM's) is read only with Full Disk Access,
+  since reading it otherwise makes macOS ask.
+
+Later, lenses can build on assets (L-5 and L-6 on extensions, L-11 on
+startup items), and the team edition can report them as inventory evidence.
 
 ## 5. Lenses
 
@@ -260,14 +292,15 @@ Kinds:
 | R-3 | Limit searching to chosen folders (`scan.roots`) and exclude folders or names (`scan.exclude`); include git worktrees | ✅ |
 | R-4 | Every finding: severity, category and topic, title, details, locations, remedy, links, fixable; stable key; notified once | ✅ |
 | R-5 | Menu bar: overall state, a submenu per category with its lenses and findings, Fix It, Open file, Copy Prompt for AI Agent, Show in Lenstica; Open Lenstica ⌘O, Settings ⌘,, Quit ⌘Q | ✅ |
-| R-6 | Window: overview, a page per category (its lenses, findings with topic, severity and text filters, deep links), a project picker (All projects, This Mac, each repository), settings; the logo's design in light and dark | ✅ |
+| R-6 | Window: overview, a page per kind of asset, a page per category (its lenses, findings with topic, severity and text filters, deep links), a project picker (All projects, This Mac, each repository), settings; the logo's design in light and dark | ✅ |
 | R-7 | Notifications: on/off, minimum severity, per lens, for automatic fixes; show the app's name and icon | ✅ |
-| R-8 | AI agents: copy a prompt per finding or for all, written from templates the user can edit in Settings; a skill; an MCP server (status, findings, finding, prompt, run, fix) | ✅ |
+| R-8 | AI agents: copy a prompt per finding or for all, written from templates the user can edit in Settings; a skill; an MCP server (status, findings, finding, prompt, assets, run, fix) | ✅ |
 | R-9 | Start at login on every platform | ✅ |
 | R-10 | Accept a finding: `audit.ignore`, `software.ignore`, `[lenses.<id>] ignore`, advisory ignores | ✅ |
 | R-11 | Install, update and remove third-party lenses safely | 📋 F-10 |
 | R-12 | Lenses that rely on a third party (a service, or a tool they run or recommend) are off until the user turns them on | ✅ |
 | R-12 | Organisation policy that a developer cannot weaken locally | 📋 T-1 |
+| R-13 | Assets: list identities (names only), repositories, applications, containers, virtual machines and extensions, each linked to its findings, in the window, the CLI and the MCP server ([4.5](#45-assets)) | ✅ |
 
 ### 6.2 Non-functional
 
@@ -615,6 +648,7 @@ Newest last. Dates are when the work landed in the local build.
 | 2026-11-03 | Window: one component set (every button and field 32px, navigation rows 36px), translatable text with a language setting, WCAG AA text colours, keyboard-navigable findings list; Lighthouse accessibility 100 on every page |
 | 2026-11-03 | Code review pass: state writes serialised (no lost or corrupt `findings.json`), menu built without holding the shared lock, no secret text in agent-lens notes or MCP URLs, OSV fix versions per advisory with real version ordering and pagination, private-registry packages kept off the network, wall-clock scheduling, safer Windows opener, pinned release workflow; shared helpers replace duplicated code |
 | 2026-11-03 | Listening-ports lens and the window's Network page: what accepts connections, and from where (this machine or the network), through the `listeners` crate; known services (debuggers, Docker API, databases) per port with their own remedies, container ports and dev servers per program, other apps informational; `[lenses.listening-ports] ignore`; `lenstica network` |
+| 2026-11-03 | Assets: identities (names only), repositories, applications, containers, virtual machines and extensions, listed locally on demand (`src/assets/`), in the sidebar above the categories with a page per kind (grouped by source, searchable, each with its details and the findings about it), `lenstica assets` and the MCP tool `lenstica_assets`; folders macOS keeps from apps without Full Disk Access are named, not silently skipped |
 
 ## 10. Decisions
 
@@ -656,8 +690,10 @@ Newest last. Dates are when the work landed in the local build.
   locations, remedy, links, whether it can be fixed, and a stable key.
 - **Key**: a finding's identity within its lens; a finding is notified once per key.
 - **Severity**: info, low, medium, high, critical. Low and above are problems.
-- **Category**: grouping in the window: malware, vulnerability, secret, cooldown,
-  deprecated, agent, settings.
+- **Category**: a kind of risk lenses register with, one page in the window:
+  AI agents, Packages, Software, Secrets, Malware, Network, Privacy.
+- **Asset**: something on the machine (an identity, repository, application,
+  container, virtual machine or extension), listed under Assets; not a finding.
 - **Cooldown**: the minimum release age: package versions younger than N days
   are not installed.
 - **Policy** (team edition): settings an organisation enforces on its developers' machines.

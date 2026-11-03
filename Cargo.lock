@@ -2151,6 +2151,7 @@ dependencies = [
  "listeners",
  "mac-notification-sys",
  "notify-rust",
+ "plist",
  "regex",
  "resvg",
  "serde",

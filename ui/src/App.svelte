@@ -1,5 +1,6 @@
 <script lang="ts">
   import { post } from "./lib/api";
+  import { isKind } from "./lib/assets";
   import Button from "./lib/components/Button.svelte";
   import Callout from "./lib/components/Callout.svelte";
   import CodeBlock from "./lib/components/CodeBlock.svelte";
@@ -8,6 +9,7 @@
   import Toasts from "./lib/components/Toasts.svelte";
   import { i18n, t } from "./lib/i18n/index.svelte";
   import { model } from "./lib/model.svelte";
+  import AssetPage from "./lib/pages/AssetPage.svelte";
   import CategoryPage from "./lib/pages/CategoryPage.svelte";
   import Overview from "./lib/pages/Overview.svelte";
   import Settings from "./lib/pages/Settings.svelte";
@@ -15,6 +17,7 @@
   import TopBar from "./lib/pages/TopBar.svelte";
 
   const category = $derived(model.state?.categories.find((c) => c.id === model.route.page));
+  const kind = $derived(model.route.page === "assets" ? (isKind(model.route.sub) ? model.route.sub : "identities") : null);
   let main: HTMLElement | undefined = $state();
 
   // The language: the one picked in Settings, else the system's; the page says which.
@@ -35,9 +38,9 @@
     e.preventDefault();
   }
 
-  // A new page, or a new section of Settings, starts at the top.
+  // A new page, a new section of Settings or a new kind of asset starts at the top.
   $effect(() => {
-    if (model.route.page === "settings") model.route.sub;
+    if (model.route.page === "settings" || model.route.page === "assets") model.route.sub;
     else model.route.page;
     main?.scrollTo({ top: 0 });
   });
@@ -63,6 +66,8 @@
         {/if}
         {#if model.route.page === "settings"}
           <Settings />
+        {:else if kind}
+          {#key kind}<AssetPage {kind} />{/key}
         {:else if category}
           {#key category.id}<CategoryPage {category} />{/key}
         {:else}

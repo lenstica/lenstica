@@ -4,6 +4,7 @@
 //! could steal. Each check is a pluggable lens (see `checks`).
 
 mod agent;
+mod assets;
 mod audit;
 mod autostart;
 mod config;
@@ -147,6 +148,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List what is on this machine: identities (accounts, never their keys),
+    /// repositories, applications, containers, virtual machines and extensions
+    Assets {
+        /// Only this kind: identities, repositories, applications, containers, virtual-machines, extensions
+        kind: Option<assets::Kind>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Run the lenses continuously in the foreground with notifications, no icon
     Watch {
         /// Run one pass and exit
@@ -157,7 +166,7 @@ enum Command {
     Tray,
     /// Open the Lenstica window: every category's lenses and findings, and settings
     Window {
-        /// Page to open on: overview, a category (agents, packages, software, secrets, malware, network, privacy) or settings; settings/<section> (general, notifications, managers, projects, checks, agents) opens one section
+        /// Page to open on: overview, a category (agents, packages, software, secrets, malware, network, privacy), assets/<kind> (identities, repositories, applications, containers, virtual-machines, extensions) or settings; settings/<section> (general, notifications, managers, projects, checks, agents) opens one section
         page: Option<String>,
     },
     /// Start the monitor automatically at login
@@ -465,6 +474,7 @@ fn run(command: Command) -> Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Command::Network { json } => network_cmd(json),
+        Command::Assets { kind, json } => assets_cmd(kind, json),
         Command::Watch { once } => watch(once),
         Command::Tray => tray(),
         Command::Window { page } => window(page),
@@ -1021,6 +1031,72 @@ fn network_cmd(json: bool) -> Result<ExitCode> {
         "{}",
         s.dim("Only programs running as you are visible. Details and remedies: `lenstica findings --lens listening-ports`.")
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// What is on this machine, by kind, grouped by where each asset comes from.
+fn assets_cmd(kind: Option<assets::Kind>, json: bool) -> Result<ExitCode> {
+    let cfg = Config::load()?;
+    let kinds: Vec<assets::Kind> = kind.map_or_else(|| assets::Kind::ALL.to_vec(), |k| vec![k]);
+    let found = assets::discover(&cfg, &kinds);
+    if json {
+        let out: Vec<serde_json::Value> = found.iter().map(assets::Discovery::brief).collect();
+        println!("{}", serde_json::to_string_pretty(&out)?);
+        return Ok(ExitCode::SUCCESS);
+    }
+    let s = Style::detect();
+    for d in &found {
+        println!(
+            "{} {}",
+            s.bold(d.kind.title()),
+            s.dim(&format!("({})", d.assets.len()))
+        );
+        if !d.supported {
+            println!("  {}", s.dim("Not listed on this system yet."));
+        }
+        let mut source: Option<&str> = None;
+        for a in &d.assets {
+            if source != Some(a.source.as_str()) {
+                source = Some(&a.source);
+                let heading = if a.source.is_empty() {
+                    d.kind.unsourced()
+                } else {
+                    &a.source
+                };
+                println!("  {heading}");
+            }
+            let mut about: Vec<String> = a.status.iter().map(|st| st.label().to_string()).collect();
+            about.extend(a.facts.iter().take(3).map(|f| f.value.clone()));
+            let tags: Vec<&str> = a.tags.iter().map(|t| t.label).collect();
+            let tags = if tags.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", tags.join(", "))
+            };
+            println!("    {:<32} {}{}", a.name, s.dim(&about.join(" · ")), tags);
+        }
+        for name in &d.not_running {
+            println!(
+                "  {}",
+                s.dim(&format!(
+                    "{name} is not running, so what it holds is not listed."
+                ))
+            );
+        }
+        for e in &d.errors {
+            println!("  {}", s.dim(&format!("Could not read {e}")));
+        }
+        if !d.blocked.is_empty() {
+            println!(
+                "  {}",
+                s.dim(&format!(
+                    "macOS did not let Lenstica read {}: give it Full Disk Access to include them.",
+                    d.blocked.join(", ")
+                ))
+            );
+        }
+        println!();
+    }
     Ok(ExitCode::SUCCESS)
 }
 

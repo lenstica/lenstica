@@ -76,6 +76,17 @@ pub fn open_url(url: &str) -> Result<()> {
     spawn(cmd, url)
 }
 
+/// System Settings → Privacy & Security → Full Disk Access, where macOS lets
+/// an app read what it protects (browser profiles, other apps' data).
+pub fn open_full_disk_access() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        anyhow::bail!("Full Disk Access is a macOS setting");
+    }
+    let mut cmd = Command::new("open");
+    cmd.arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");
+    spawn(cmd, "Full Disk Access settings")
+}
+
 /// Open a file with the platform's default handler (a text editor on macOS).
 pub fn open(path: &Path) -> Result<()> {
     let mut cmd = if cfg!(target_os = "macos") {

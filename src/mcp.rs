@@ -151,6 +151,17 @@ fn tools() -> Value {
             "annotations": read_only,
         },
         {
+            "name": "lenstica_assets",
+            "description": "What is on this machine: identities (accounts signed in to git, SSH, GitHub, AWS, Google Cloud, Azure, Kubernetes, registries and AI tools; names only, never keys), repositories, applications, containers, virtual machines, and editor and browser extensions. Runs local listing commands such as `docker ps`; sends nothing anywhere.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "kind": { "type": "string", "enum": crate::assets::Kind::ALL.map(crate::assets::Kind::id), "description": "Only this kind; all when omitted" }
+                }
+            },
+            "annotations": read_only,
+        },
+        {
             "name": "lenstica_run",
             "description": "Run lenses now and return their summaries, e.g. to confirm a fix. Dependency lenses can take a minute on a large machine.",
             "inputSchema": {
@@ -353,6 +364,17 @@ fn call(name: &str, args: &Value) -> Result<String> {
             );
             lenses::fix(&cfg, lens, key).map(|(done, _)| done)
         }
+        "lenstica_assets" => {
+            use crate::assets::{self, Kind};
+            let kinds = match str_arg(args, "kind") {
+                Some(k) => vec![Kind::from_id(k).with_context(|| format!("unknown kind `{k}`"))?],
+                None => Kind::ALL.to_vec(),
+            };
+            let found = assets::discover(&cfg, &kinds);
+            Ok(pretty(&Value::Array(
+                found.iter().map(assets::Discovery::brief).collect(),
+            )))
+        }
         other => bail!("unknown tool `{other}`"),
     }
 }
@@ -381,6 +403,7 @@ mod tests {
                 "lenstica_findings",
                 "lenstica_finding",
                 "lenstica_prompt",
+                "lenstica_assets",
                 "lenstica_run",
                 "lenstica_fix"
             ]

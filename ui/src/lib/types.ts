@@ -123,3 +123,34 @@ export interface Listening {
   /** The listening-ports finding that covers it, when other devices can reach it. */
   findingKey: string | null;
 }
+
+/** A kind of asset: a page under Assets in the sidebar (src/assets/mod.rs). */
+export type AssetKind = "identities" | "repositories" | "applications" | "containers" | "virtual-machines" | "extensions";
+
+/** One thing on this machine: an account, a repository, an app, a container… */
+export interface Asset {
+  /** Unique within its kind. */
+  id: string;
+  name: string;
+  /** What it comes from or runs on (`AWS`, `Docker Desktop`); empty for none. */
+  source: string;
+  status?: "running" | "paused" | "stopped";
+  path?: string;
+  /** `label` is Rust's English, for a key the window has no translation for. */
+  facts: { key: string; label: string; value: string }[];
+  tags: { key: string; label: string }[];
+}
+
+/** What one look for a kind of asset found. */
+export interface Discovery {
+  kind: AssetKind;
+  supported: boolean;
+  assets: Asset[];
+  /** Tools installed but not running, so what they hold is missing. */
+  notRunning: string[];
+  /** Sources that could not be read. */
+  errors: string[];
+  /** Sources macOS keeps from apps without Full Disk Access. */
+  blocked: string[];
+  seconds: number;
+}

@@ -20,7 +20,7 @@ mod projects;
 mod safe_chain;
 mod scripts;
 pub mod shared;
-mod software;
+pub(crate) mod software;
 pub mod store;
 
 use std::cmp::Ordering;

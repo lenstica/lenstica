@@ -1,17 +1,18 @@
-// The window's state: what Rust sent, the repositories found, the selected
-// project, the page, and everything derived from them.
-import { getState, listRepos, listen, post, reportErrorsTo } from "./api";
+// The window's state: what Rust sent, the repositories and assets found, the
+// selected project, the page, and everything derived from them.
+import { getState, listAssets, listRepos, listen, post, reportErrorsTo } from "./api";
+import { isKind, KINDS } from "./assets";
 import { t, tOr } from "./i18n/index.svelte";
-import type { Category, Item, Lens, Location, Repo, Severity, State } from "./types";
+import type { Asset, AssetKind, Category, Discovery, Item, Lens, Location, Repo, Severity, State } from "./types";
 
 export const SEVERITIES: Severity[] = ["info", "low", "medium", "high", "critical"];
 export const rank = (s: Severity) => SEVERITIES.indexOf(s);
 
 /** `#overview`, `#<category>`, `#<category>/<lens|key>` for one finding,
- * `#settings` or `#settings/<section>`. */
+ * `#assets/<kind>`, `#settings` or `#settings/<section>`. */
 export interface Route {
   page: string;
-  /** The finding on a category page, or the section of Settings. */
+  /** The finding on a category page, the kind of asset, or the section of Settings. */
   sub: string | null;
 }
 
@@ -27,7 +28,8 @@ export const ALL = "all";
 export const MAC = "mac";
 const SCOPE_KEY = "lenstica.scope";
 
-const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+/** A path with forward slashes and no trailing slash, to compare. */
+export const norm = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
 const basename = (p: string) => norm(p).split("/").pop() || p;
 
 /** How a lens is doing, as one word the UI styles. */
@@ -62,6 +64,12 @@ class Model {
   /** Where Back and Forward go. */
   past = $state<Route[]>([]);
   future = $state<Route[]>([]);
+  /** What is on this machine, by kind, as last looked for. */
+  assets = $state<Partial<Record<AssetKind, Discovery>>>({});
+  /** When each kind was last looked for, and which are being looked for now. */
+  assetsAt = $state<Partial<Record<AssetKind, number>>>({});
+  assetsLoading = $state<AssetKind[]>([]);
+  assetsError = $state<string | null>(null);
 
   threshold = $derived(rank(this.state?.alertSeverity ?? "medium"));
 
@@ -144,6 +152,15 @@ class Model {
   itemsIn = (category: string): Item[] => this.scoped.filter((i) => i.category === category);
   alertsIn = (category: string): Item[] => this.itemsIn(category).filter(this.isAlert);
 
+  /** The findings about an asset: a repository's are its project's; anything
+   * else's are those with a location in its file or folder. */
+  findingsAbout(kind: AssetKind, a: Asset): Item[] {
+    if (!a.path) return [];
+    const p = norm(a.path);
+    if (kind === "repositories") return this.items.filter((i) => i.scopes.has(p));
+    return this.items.filter((i) => i.locations.some((l) => l.path && (norm(l.path) === p || norm(l.path).startsWith(p + "/"))));
+  }
+
   lensState(lens: Lens): LensState {
     if (!lens.enabled) return "off";
     if (lens.running) return "running";
@@ -202,8 +219,9 @@ class Model {
     const hash = sub ? `${page}/${encodeURIComponent(sub)}` : page;
     history.replaceState(null, "", `#${hash}`);
     post({ type: "rendered", page });
-    // Look for repositories afresh each time Settings opens.
+    // Look for repositories afresh each time Settings opens, and for a kind of asset when its page does.
     if (page === "settings" && !wasSettings) this.loadRepos();
+    if (page === "assets" && isKind(sub)) this.loadAssets([sub]);
   }
 
   /** Show the prompt for these findings, to read before copying it. */
@@ -234,6 +252,27 @@ class Model {
       });
   }
 
+  /** Look for these kinds of asset (every kind by default). A kind looked for
+   * in the last 15 seconds, or being looked for now, is left alone unless `again`. */
+  loadAssets(kinds: AssetKind[] = KINDS, again = false) {
+    const now = Date.now();
+    const asking = kinds.filter(
+      (k) => !this.assetsLoading.includes(k) && (again || now - (this.assetsAt[k] ?? 0) > 15_000),
+    );
+    if (!asking.length) return;
+    this.assetsLoading = [...this.assetsLoading, ...asking];
+    listAssets(asking)
+      .then((list) => {
+        for (const d of list) {
+          this.assets[d.kind] = d;
+          this.assetsAt[d.kind] = Date.now();
+        }
+        this.assetsError = null;
+      })
+      .catch((e) => (this.assetsError = String(e)))
+      .finally(() => (this.assetsLoading = this.assetsLoading.filter((k) => !asking.includes(k))));
+  }
+
   /** Subscribe first, then pull the state: an event sent before the
    * subscription is in place would be lost, and the page would wait forever. */
   async start() {
@@ -248,6 +287,7 @@ class Model {
       await listen<{ text: string; ok: boolean }>("toast", (t) => this.toast(t.text, t.ok));
       this.state = await getState();
       this.loadRepos();
+      this.loadAssets();
       post({ type: "rendered", page: this.route.page });
     } catch (e) {
       this.loadError = String(e);

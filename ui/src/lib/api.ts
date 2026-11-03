@@ -1,6 +1,7 @@
 // The bridge to Rust: one `action` command for everything the window asks
-// for, `get_state`, `list_repos` and `list_listening`, and the `state`, `navigate` and `toast` events.
-import type { Listening, PromptKind, Repo, State } from "./types";
+// for, `get_state`, `list_repos`, `list_listening` and `list_assets`, and the
+// `state`, `navigate` and `toast` events.
+import type { AssetKind, Discovery, Listening, PromptKind, Repo, State } from "./types";
 
 declare global {
   interface Window {
@@ -29,6 +30,8 @@ export const getState = () => tauri().core.invoke<State>("get_state");
 export const listRepos = () => tauri().core.invoke<Repo[]>("list_repos");
 /** Every program accepting TCP connections now, for the Network page. */
 export const listListening = () => tauri().core.invoke<Listening[]>("list_listening");
+/** What is on this machine: every kind of asset, or only these. */
+export const listAssets = (kinds?: AssetKind[]) => tauri().core.invoke<Discovery[]>("list_assets", { kinds: kinds ?? null });
 /** The prompt Copy Prompt for AI Agent would copy for these findings (no key: all of a lens's alerts). */
 export const promptText = (items: { lens: string; key?: string }[]) =>
   tauri().core.invoke<{ text: string; count: number }>("prompt_text", { items });

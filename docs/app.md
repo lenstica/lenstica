@@ -28,8 +28,9 @@ window's project picker does not change it.
 
 ## The window
 
-The sidebar has the Overview, then one page per category, and at the bottom
-the project picker, Settings, a link to the project on GitHub and the version.
+The sidebar has the Overview, then **Assets** (a page per kind, with how many
+there are), then one page per category, and at the bottom the project picker,
+Settings, a link to the project on GitHub and the version.
 Above the page, the top bar has Back and Forward (⌘[ and ⌘]) and where you
 are. On macOS the window has no separate title bar: the window buttons sit in
 the top bar, beside the logo, and dragging the bar moves the window
@@ -38,6 +39,25 @@ the top bar, beside the logo, and dragging the bar moves the window
 - **Overview**: how many findings need attention, by severity; a card per
   category with its state and topics; and the findings that need attention
   most. Check everything runs every lens that is on.
+- **Assets**: what is on this machine, a page per kind: **Identities** (your
+  git author, SSH keys, and the accounts signed in to the GitHub CLI, AWS,
+  Google Cloud, Azure, Kubernetes, Docker registries, npm, PyPI, Cargo,
+  `.netrc`, Claude Code and Codex: names only, never a key, tagged when a
+  credential is kept in a plain file), **Repositories** (with remote, branch
+  and worktrees), **Applications** (version, bundle id, and where each came
+  from: App Store, Homebrew, Apple), **Containers** (running and stopped, in
+  Docker Desktop, OrbStack, Colima, Rancher Desktop or Podman), **Virtual
+  machines** (Lima, Colima, Podman, Multipass, Tart, Parallels, VirtualBox,
+  VMware Fusion, UTM, Vagrant) and **Extensions** (VS Code, Cursor, Windsurf,
+  VSCodium, Zed; Chrome, Brave, Edge, Arc, Vivaldi, Firefox; tagged when one
+  can read every site). Each page groups by source, filters by source and
+  text, and shows an asset's details, its file or folder (open or reveal),
+  and the findings with a location in it; a repository also shows its
+  project's findings in one click. Lenstica looks again each time a page
+  opens, and on Look again; nothing is started, changed or sent. A tool that
+  is installed but not running (Docker) is named, and so are folders macOS
+  keeps from apps without Full Disk Access (browser profiles), with a button
+  to that setting.
 - **A category** (AI agents, Packages, …): what it covers and its state; its
   **lenses**, each with its state, summary and last run, a Run button and an
   on/off switch (third-party lenses say what they send or install, and are off

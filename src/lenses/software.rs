@@ -162,7 +162,7 @@ fn end_of_day(raw: &str) -> Option<DateTime<Utc>> {
 // ---- what is installed ---------------------------------------------------------
 
 /// Homebrew prefixes with a Cellar: Apple Silicon, Intel and Linux installs.
-fn brew_prefixes() -> Vec<PathBuf> {
+pub(crate) fn brew_prefixes() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let candidates = std::env::var_os("HOMEBREW_PREFIX")
         .filter(|v| !v.is_empty())

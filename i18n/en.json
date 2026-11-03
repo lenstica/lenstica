@@ -12,6 +12,7 @@
   "nav": {
     "label": "Lenstica",
     "overview": "Overview",
+    "assets": "Assets",
     "categories": "Categories",
     "settings": "Settings",
     "github": "GitHub",
@@ -229,6 +230,133 @@
     "everyInterface": "every network interface",
     "pids": "pid {pids}",
     "showFinding": "Show its finding"
+  },
+  "assets": {
+    "kinds": {
+      "identities": {
+        "title": "Identities",
+        "description": "The accounts this Mac can act as: your git author, SSH keys, and the accounts signed in to cloud, registry and AI tools. Lenstica shows names only, never a key or token, and notes where one is kept in a plain file that any program you run can read.",
+        "empty": "No signed-in accounts or keys found."
+      },
+      "repositories": {
+        "title": "Repositories",
+        "description": "Every repository in the folders Lenstica searches, with its remote, branch and worktrees. Settings → Projects chooses the folders.",
+        "empty": "No repositories in the folders Lenstica searches. Settings → Projects chooses them.",
+        "noSource": "No remote"
+      },
+      "applications": {
+        "title": "Applications",
+        "description": "Installed apps, with their versions, and where each came from: the App Store, Homebrew, Apple, or somewhere else.",
+        "empty": "No applications found."
+      },
+      "containers": {
+        "title": "Containers",
+        "description": "Containers, running and stopped, in Docker Desktop, OrbStack, Colima, Rancher Desktop and Podman. Nothing is started to look.",
+        "empty": "No containers. Those you create with Docker or Podman show here."
+      },
+      "virtual-machines": {
+        "title": "Virtual machines",
+        "description": "Virtual machines in Lima, Colima, Podman, Multipass, Tart, UTM, Parallels, VMware Fusion, VirtualBox and Vagrant. Nothing is started to look.",
+        "empty": "No virtual machines."
+      },
+      "extensions": {
+        "title": "Extensions",
+        "description": "Extensions in your editors (VS Code, Cursor, Windsurf, VSCodium, Zed) and browsers (Chrome, Brave, Edge, Arc, Vivaldi, Firefox). They run with access to your code, the pages you visit, or both.",
+        "empty": "No editor or browser extensions."
+      }
+    },
+    "noSource": "Other",
+    "facts": {
+      "account": "Account",
+      "user": "User",
+      "email": "Email",
+      "host": "Host",
+      "signIn": "Sign-in",
+      "region": "Region",
+      "role": "Role",
+      "project": "Project",
+      "cluster": "Cluster",
+      "namespace": "Namespace",
+      "keyType": "Key type",
+      "comment": "Comment",
+      "signing": "Commit signing",
+      "organization": "Organization",
+      "subscriptions": "Subscriptions",
+      "keptIn": "Key kept in",
+      "remote": "Remote",
+      "branch": "Branch",
+      "worktrees": "Worktrees",
+      "version": "Version",
+      "bundleId": "Bundle ID",
+      "image": "Image",
+      "state": "State",
+      "ports": "Ports",
+      "created": "Created",
+      "id": "ID",
+      "arch": "Architecture",
+      "cpus": "CPUs",
+      "memory": "Memory",
+      "disk": "Disk",
+      "type": "Type",
+      "system": "System",
+      "address": "Address",
+      "folder": "Folder",
+      "publisher": "Publisher",
+      "profile": "Profile",
+      "updated": "Updated",
+      "installed": "Installed"
+    },
+    "tags": {
+      "current": "In use",
+      "credentialsInFile": "Credentials in a file",
+      "allSites": "All sites",
+      "disabled": "Turned off",
+      "excluded": "Left out of checks"
+    },
+    "tagNotes": {
+      "credentialsInFile": "A token, password or key is written in this file, where any program running as you can read it.",
+      "allSites": "It can read and change every website you visit.",
+      "excluded": "Lenstica's lenses skip it (Settings → Projects)."
+    },
+    "status": {
+      "running": "Running",
+      "paused": "Paused",
+      "stopped": "Stopped"
+    },
+    "count": {
+      "one": "{count} found",
+      "other": "{count} found"
+    },
+    "running": "{count} running",
+    "looked": "Looked {ago}",
+    "looking": "Looking…",
+    "lookAgain": "Look again",
+    "notRunning": "Not running: {names}. What they hold shows here once they are started.",
+    "blocked": "macOS does not let Lenstica read {names} without Full Disk Access, so what they hold is missing here. Lenstica only reads; it changes nothing there.",
+    "openFullDiskAccess": "Open Full Disk Access settings",
+    "errors": {
+      "one": "{count} source could not be read",
+      "other": "{count} sources could not be read"
+    },
+    "unsupported": "Lenstica cannot list these on this system yet.",
+    "loadError": "Could not look for assets",
+    "search": "Search names, versions, accounts…",
+    "searchLabel": "Search {kind}",
+    "all": "All",
+    "noMatchTitle": "Nothing matches",
+    "noMatchBody": "Try another source or a different search.",
+    "listLabel": "{kind}",
+    "details": "Details",
+    "findings": {
+      "one": "{count} finding",
+      "other": "{count} findings"
+    },
+    "findingsNote": "Findings with a location in it.",
+    "showProject": "Show this project's findings",
+    "needAttention": {
+      "one": "{count} needs attention",
+      "other": "{count} need attention"
+    }
   },
   "prompt": {
     "title": "Prompt for your AI agent",

@@ -20,6 +20,8 @@ lenstica findings --lens secrets --json
 lenstica prompt                          # a ready-made brief of everything needing attention
 lenstica prompt <lens> '<key>'        # the brief for one finding
 lenstica network --json                  # what accepts connections, and whether the network can reach it
+lenstica assets --json                   # what is on this machine: identities (names only), repositories, apps, containers, VMs, extensions
+lenstica assets containers --json        # one kind: identities, repositories, applications, containers, virtual-machines, extensions
 ```
 
 Each finding has `lens`, `key`, `severity` (info, low, medium, high,

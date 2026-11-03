@@ -1,6 +1,7 @@
 <script lang="ts">
   import { LayoutGrid, Settings } from "@lucide/svelte";
   import { post } from "../api";
+  import { KINDS, kindIcon, kindTitle } from "../assets";
   import CountBadge from "../components/CountBadge.svelte";
   import Eyebrow from "../components/Eyebrow.svelte";
   import LensGlyph from "../components/LensGlyph.svelte";
@@ -47,6 +48,21 @@
       onclick={() => model.go("overview")}
       trailing={overviewEnd}
     />
+    <Eyebrow class="px-[11px] pb-[4px] pt-[18px]">{t("nav.assets")}</Eyebrow>
+    {#each KINDS as kind (kind)}
+      {@const found = model.assets[kind]}
+      {@const here = model.route.page === "assets" && model.route.sub === kind}
+      <!-- How many there are: a plain number, not a badge, since nothing here needs attention by being counted. -->
+      {#snippet end()}{#if found?.supported}<span class="tabular text-xs text-faint">{found.assets.length}</span>{/if}{/snippet}
+      <NavItem
+        icon={kindIcon(kind)}
+        label={kindTitle(kind)}
+        active={here}
+        aria-current={here ? "page" : undefined}
+        onclick={() => model.go("assets", kind)}
+        trailing={end}
+      />
+    {/each}
     <Eyebrow class="px-[11px] pb-[4px] pt-[18px]">{t("nav.categories")}</Eyebrow>
     {#each model.categories as c (c.id)}
       {#snippet end()}{@render status(model.alertsIn(c.id).length, model.categoryState(c.id))}{/snippet}

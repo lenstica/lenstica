@@ -91,7 +91,8 @@ const _: &[u8] = include_bytes!("../../assets/ui/app.css");
 /// The window's pages, as `lenstica window <page>` and the page's `#hash` name
 /// them: the overview, one per category, and settings.
 pub fn pages() -> Vec<&'static str> {
-    let mut all = vec!["overview"];
+    // `assets/<kind>` opens one kind of asset.
+    let mut all = vec!["overview", "assets"];
     all.extend(Category::ALL.map(Category::id));
     all.push("settings");
     all
@@ -140,7 +141,8 @@ pub fn run(open_window: Option<String>) -> Result<()> {
             commands::list_repos,
             commands::preview_prompt,
             commands::prompt_text,
-            commands::list_listening
+            commands::list_listening,
+            commands::list_assets
         ])
         .setup(move |app| {
             #[cfg(target_os = "macos")]

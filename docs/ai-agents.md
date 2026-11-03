@@ -99,6 +99,7 @@ or use the `mcpServers` entry that `lenstica mcp --setup` prints.
 | `lenstica_findings` | findings, filtered by severity, lens, category or text |
 | `lenstica_finding` | one finding in full, with its brief |
 | `lenstica_prompt` | a brief for an AI agent |
+| `lenstica_assets` | what is on this machine: accounts (names only), repositories, apps, containers, virtual machines, extensions |
 | `lenstica_run` | re-run lenses, to confirm a fix |
 | `lenstica_fix` | apply one of Lenstica's own fixes |
 

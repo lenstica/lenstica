@@ -41,5 +41,6 @@ else English.
 ## Not translated yet
 
 Text a lens writes is still English: lens names and descriptions, findings,
-summaries and remedies. So are error messages from the system and the CLI's
+summaries and remedies. So are the details of assets as the system and tools
+give them (a container's "Up 3 hours", a sign-in method). So are error messages from the system and the CLI's
 output ([#20](https://github.com/lenstica/lenstica/issues/20)).

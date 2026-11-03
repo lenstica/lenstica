@@ -2,6 +2,7 @@
   // The bar along the top of the content: Back, Forward and where you are. It
   // is also the window's title bar: drag it to move the window.
   import { ChevronLeft, ChevronRight, LayoutGrid, Settings } from "@lucide/svelte";
+  import { isKind, kindIcon, kindTitle } from "../assets";
   import IconButton from "../components/IconButton.svelte";
   import LinkButton from "../components/LinkButton.svelte";
   import { t } from "../i18n/index.svelte";
@@ -11,12 +12,15 @@
 
   const page = $derived(model.route.page);
   const category = $derived(model.state?.categories.find((c) => c.id === page));
+  const kind = $derived(page === "assets" && isKind(model.route.sub) ? model.route.sub : null);
   const trail = $derived(
     page === "settings"
       ? { icon: Settings, title: t("nav.settings"), sub: sectionOf(model.route.sub).title }
-      : category
-        ? { icon: categoryIcon(category.id), title: categoryTitle(category), sub: null }
-        : { icon: LayoutGrid, title: t("nav.overview"), sub: null },
+      : kind
+        ? { icon: kindIcon(kind), title: kindTitle(kind), sub: null }
+        : category
+          ? { icon: categoryIcon(category.id), title: categoryTitle(category), sub: null }
+          : { icon: LayoutGrid, title: t("nav.overview"), sub: null },
   );
 </script>
 

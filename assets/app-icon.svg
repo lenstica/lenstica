@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Lenstica: a library of lenses. Three coloured lenses fan out behind the
+       one you look through; inside it, a shield with a check. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1e1b4b"/>
+      <stop offset="1" stop-color="#0b1020"/>
+    </linearGradient>
+    <radialGradient id="glass" cx="0.38" cy="0.34" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.03"/>
+    </radialGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <g transform="translate(22 26)">
+  <!-- the lens library: rings fanned behind the front lens -->
+  <circle cx="372" cy="402" r="196" fill="none" stroke="#2dd4bf" stroke-width="40" opacity="0.9"/>
+  <circle cx="418" cy="372" r="196" fill="none" stroke="#fbbf24" stroke-width="40" opacity="0.9"/>
+  <circle cx="470" cy="360" r="196" fill="none" stroke="#fb7185" stroke-width="40" opacity="0.9"/>
+  <!-- the lens you look through -->
+  <line x1="612" y1="612" x2="790" y2="790" stroke="#ffffff" stroke-width="84" stroke-linecap="round"/>
+  <circle cx="470" cy="470" r="210" fill="#0f1430"/>
+  <circle cx="470" cy="470" r="210" fill="url(#glass)" stroke="#ffffff" stroke-width="56"/>
+  <!-- shield with a check -->
+  <path d="M470 346 L566 384 V468 C566 530 526 574 470 598 C414 574 374 530 374 468 V384 Z"
+        fill="none" stroke="#ffffff" stroke-width="30" stroke-linejoin="round"/>
+  <path d="M424 474 L458 508 L520 444" fill="none" stroke="#2dd4bf" stroke-width="32" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- glint -->
+  <path d="M352 420 A130 130 0 0 1 420 352" fill="none" stroke="#ffffff" stroke-width="22" stroke-linecap="round" opacity="0.55"/>
+  </g>
+</svg>

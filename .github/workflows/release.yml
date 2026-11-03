@@ -1,0 +1,61 @@
+# Native packages for every platform, built on that platform: Tauri cannot
+# cross-bundle (macOS signing tools, the Windows resource compiler and the
+# Linux system libraries are each only available natively).
+#
+# Push a tag like v0.2.0, or run it by hand; the bundles land on a draft release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  bundle:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Linux system libraries (tray, window)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Skips the Finder window layout step of the .dmg, which needs a GUI session.
+          CI: "true"
+        with:
+          tauriScript: cargo tauri
+          args: --target ${{ matrix.target }}
+          tagName: ${{ github.ref_name }}
+          releaseName: Lenstica ${{ github.ref_name }}
+          releaseDraft: true

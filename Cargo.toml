@@ -2,7 +2,7 @@
 name = "lenstica"
 version = "0.1.0"
 edition = "2024"
-description = "A local security monitor for developer machines, built from pluggable lenses."
+description = "Security monitoring for developers, built from pluggable lenses."
 homepage = "https://lenstica.com"
 repository = "https://github.com/lenstica/lenstica"
 license = "Apache-2.0"

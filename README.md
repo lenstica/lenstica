@@ -5,7 +5,7 @@
 <h1 align="center">Lenstica</h1>
 
 <p align="center">
-  A local security monitor for developer machines.
+  Security monitoring for developers.
 </p>
 
 <p align="center">

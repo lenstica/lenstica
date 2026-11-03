@@ -1,7 +1,5 @@
 # Lenstica: product and engineering spec
 
-**Every vulnerability, through the right lens.**
-
 This file is where we track what Lenstica is, what has been built, how we
 build it, and what comes next. Write a future feature down here first;
 building it is a separate decision. Update the status of an item when its

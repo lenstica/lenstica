@@ -1,6 +1,6 @@
 ---
 name: lenstica
-description: Read and act on findings from Lenstica, the local supply-chain security monitor built from lenses (package-manager minimum release age, too-new or malicious packages, known vulnerabilities, exposed secrets, too-new installed software, suspicious AI agent instructions). Use when the user asks what Lenstica found, asks to fix a Lenstica finding, pastes a prompt that came from Lenstica, or wants a security check of their dependencies or machine.
+description: Read and act on findings from Lenstica, the local security monitor built from lenses (package-manager minimum release age, too-new or malicious packages, known vulnerabilities, exposed secrets, too-new installed software, suspicious AI agent instructions). Use when the user asks what Lenstica found, asks to fix a Lenstica finding, pastes a prompt that came from Lenstica, or wants a security check of their dependencies or machine.
 ---
 
 # Lenstica

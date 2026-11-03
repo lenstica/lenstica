@@ -5,8 +5,7 @@
 <h1 align="center">Lenstica</h1>
 
 <p align="center">
-  <strong>Every vulnerability, through the right lens.</strong><br>
-  A local supply-chain security monitor for developer machines.
+  A local security monitor for developer machines.
 </p>
 
 <p align="center">

@@ -8,7 +8,7 @@ use lenstica_lens::Finding;
 /// One finding.
 pub fn for_finding(f: &Finding, lens_title: &str) -> String {
     let mut out = format!(
-        "Lenstica, the supply-chain security monitor on this machine, reported a {} finding from its \"{}\" check:\n\n{}\n",
+        "Lenstica, the security monitor on this machine, reported a {} finding from its \"{}\" check:\n\n{}\n",
         f.severity.label(),
         lens_title,
         f.title
@@ -32,7 +32,7 @@ pub fn for_findings(findings: &[(&Finding, &str)]) -> String {
         [(f, title)] => for_finding(f, title),
         many => {
             let mut out = format!(
-                "Lenstica, the supply-chain security monitor on this machine, reported {} findings. Work through them most severe first:\n",
+                "Lenstica, the security monitor on this machine, reported {} findings. Work through them most severe first:\n",
                 many.len()
             );
             for (i, (f, title)) in many.iter().enumerate() {

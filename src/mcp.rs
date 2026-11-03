@@ -17,7 +17,7 @@ use crate::prompt;
 
 const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
-const INSTRUCTIONS: &str = "Lenstica is the supply-chain security monitor on this machine. \
+const INSTRUCTIONS: &str = "Lenstica is the security monitor on this machine. \
 Start with lenstica_status, list findings with lenstica_findings, and get the brief for one with lenstica_finding. \
 Never print or copy secret values; findings hold names and paths only. \
 For malware, stop and tell the user: the machine should be treated as compromised. \

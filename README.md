@@ -13,104 +13,128 @@
   <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg" alt="Platforms: macOS, Linux, Windows">
 </p>
 
-Lenstica watches your machine through **lenses**, small checks that each look
-for one kind of risk. Every finding shows up in the menu bar, the window, the
-CLI and your AI agent, with a remedy and often a one-click fix.
+Lenstica is a security monitor for your development machine. It sets a 7-day
+cooldown in your JavaScript, Python and Rust package managers, so they only
+install versions at least a week old. It also watches for malicious packages,
+exposed credentials and poisoned AI-agent instructions.
 
-## ✨ Features
+Each check is a **lens** that looks for one kind of risk. Findings appear in
+the menu bar, the window, the CLI and your AI agent, each with a remedy and
+often a one-click fix.
 
-| | Feature | What it does |
-|---|---------|--------------|
-| ⏳ | **Cooldown everywhere** | npm, pnpm, Yarn, Bun, uv, pip, Poetry and Cargo never install versions younger than 7 days; Lenstica restores the setting if something resets it |
-| 📦 | **Dependency audit** | Too-new, vulnerable, malicious and deprecated packages in every lockfile, worktree and global install |
-| 🔑 | **Exposed secrets** | Credentials that malware running as you could steal (values are never stored or shown) |
-| 🤖 | **AI-agent instructions** | Hidden text, prompt injection and risky settings in CLAUDE.md, AGENTS.md, skills, hooks and MCP configs |
-| 🧰 | **Software ages** | Package managers, Homebrew formulae and casks, Rust toolchains and Node.js that are too new |
-| 🛠️ | **One-click fixes** | Fix findings from the menu or CLI, with a backup of every file Lenstica edits |
-| 🧩 | **Your own lenses** | A Rust crate, any CLI that prints JSON, or gitleaks, osv-scanner and trufflehog |
-| 🔒 | **Local first** | No account, no telemetry |
+## Features
 
-## 💡 Why a cooldown?
+| Feature | What it does |
+|---------|--------------|
+| **Cooldown everywhere** | Sets a 7-day minimum release age in npm, pnpm, Yarn, Bun, uv, pip, Poetry and Cargo, and restores it if something resets it |
+| **Dependency audit** | Finds too-new, vulnerable, malicious and deprecated packages in every lockfile, worktree and global install |
+| **Exposed secrets** | Finds credentials that malware running as you could steal, without storing or showing their values |
+| **AI-agent instructions** | Flags hidden text, prompt injection and risky settings in CLAUDE.md, AGENTS.md, skills, hooks and MCP configs |
+| **Software ages** | Flags package managers, Homebrew formulae and casks, Rust toolchains and Node.js releases that are too new |
+| **One-click fixes** | Fixes findings from the menu or the CLI, and backs up every file it edits |
+| **Your own lenses** | Runs your own checks: a Rust crate, any CLI that prints JSON, or gitleaks, osv-scanner and trufflehog |
+| **Local first** | Runs on your machine, with no account and no telemetry |
 
-- 🐛 Malicious package versions are usually caught and pulled within days
-- 📊 8 of 10 prominent attacks in 2024-2025 were live for less than a week
-- ⚙️ Every package manager supports a minimum release age, each with its own
-  setting name, unit and file. Lenstica sets them all and keeps them set
-- ✍️ Prefer doing it by hand? See [docs/cooldown.md](docs/cooldown.md)
+## Why a cooldown?
 
-## 📥 Installation
+- Most malicious package versions are caught and pulled within hours or days.
+- Of ten prominent supply-chain attacks in 2024 and 2025,
+  [eight were live for less than a week](https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns),
+  so a 7-day cooldown would have kept them out.
+- The major JavaScript, Python and Rust package managers all support a
+  minimum release age now, but each has its own setting name, unit and config
+  file. Lenstica sets them all and keeps them set.
+- To set them by hand instead, see [docs/cooldown.md](docs/cooldown.md).
+
+## Installation
 
 > [!NOTE]
-> No prebuilt releases yet. Build from source with [Rust](https://rustup.rs)
-> 1.90 or newer.
+> Lenstica 0.1 has no prebuilt releases yet. Build it from source with
+> [Rust](https://rustup.rs) 1.90 or newer.
 
 ```sh
 git clone https://github.com/lenstica/lenstica.git && cd lenstica
 cargo install --path .
 ```
 
-- 🐧 **Linux**: install `libgtk-3-dev libayatana-appindicator3-dev
-  libwebkit2gtk-4.1-dev` first, or build headless with
-  `--no-default-features --features secrets`
-- 📦 **Native packages** (`.app`/`.dmg`, `.msi`, `.deb`/`.rpm`/`.AppImage`):
-  `cargo install tauri-cli --version "^2" --locked && CI=true cargo tauri build`
+- **Linux**: first install `libgtk-3-dev libayatana-appindicator3-dev
+  libwebkit2gtk-4.1-dev`, or build the CLI without the menu bar app:
+  `cargo install --path . --no-default-features --features secrets`.
+- **Native packages** (`.app`/`.dmg`, `.msi`, `.deb`/`.rpm`/`.AppImage`): run
+  `cargo install tauri-cli --version "^2" --locked && CI=true cargo tauri build`.
 
-## 🚀 Quick start
+## Quick start
 
 ```sh
-lenstica apply              # set a 7-day cooldown in every package manager
+lenstica apply              # set the 7-day cooldown in each supported package manager
 lenstica status             # run the lenses and show what needs attention
 lenstica autostart install  # start the menu bar app at every login
 ```
 
-- 📁 Lenstica searches `~/Developer` by default. Change `scan.roots` in
-  `~/.config/lenstica/lenstica.toml` or in the window's Settings
-- 🕐 Change the cooldown with `lenstica set <days>`
-- 🚦 `lenstica check` exits 1 when something needs attention, so it works in CI
-- 📖 Every command: `lenstica --help`
+- Lenstica searches whichever of `~/Developer`, `~/Projects`, `~/src`,
+  `~/code`, `~/dev`, `~/repos` and `~/workspace` exist. To change that, edit
+  `scan.roots` in `~/.config/lenstica/lenstica.toml` or open Settings in the
+  window.
+- To change the cooldown, run `lenstica set <days>`.
+- `lenstica check` exits with status 1 when something needs attention, for
+  scripts and CI.
+- `lenstica --help` lists every command.
 
-## 🔍 Lenses
+## Lenses
+
+Each lens looks for one kind of risk. `lenstica lenses` lists them, and
+[docs/lenses.md](docs/lenses.md) describes each one.
 
 | Lens | Finds |
 |------|-------|
 | `package-managers` | Missing or weaker cooldown settings |
 | `project-settings` | Repository files that lower the cooldown |
-| `package-age` | Locked or installed versions younger than N days |
+| `package-age` | Locked or installed versions younger than the cooldown |
 | `vulnerabilities` | Known vulnerabilities and malware, from OSV.dev |
 | `aikido-malware` | Packages on Aikido Intel's malware lists |
 | `deprecated` | Deprecated (npm) or yanked (PyPI) versions |
-| `software` | Installed software younger than N days |
+| `software` | Installed software younger than the cooldown |
 | `homebrew-updates` | Homebrew auto-updating before every install |
 | `safe-chain` | Whether Aikido Safe Chain is set up |
 | `install-scripts` | Package managers that run install scripts |
 | `secrets` | Credentials malware could steal |
 | `agent-instructions` | Poisoned AI-agent instructions and risky agent settings |
 
-## 🤖 AI agents
+## AI agents
 
-- 📋 **Copy Prompt for AI Agent** on any finding, or `lenstica prompt`
-- 🎓 **Skill**: `lenstica skill --install` teaches Claude Code the CLI
-- 🔌 **MCP server**: `claude mcp add --scope user lenstica -- lenstica mcp`
+Lenstica can hand its findings to Claude Code and other coding agents:
 
-## 🛡️ Privacy
+- **Prompt**: click **Copy Prompt for AI Agent** on any finding, or run
+  `lenstica prompt`.
+- **Skill**: `lenstica skill --install` teaches Claude Code the CLI.
+- **MCP server**: `claude mcp add --scope user lenstica -- lenstica mcp`, or
+  `lenstica mcp --setup` for other agents.
 
-- 📤 Public package names and versions go to their registries and OSV.dev;
-  installed software versions go to their release sites, to date them
-- 📥 Aikido's malware lists are downloaded whole, so no names are sent
-- 🚫 Private, git and local dependencies are skipped
-- 🙈 Secret values are never stored, logged, shown or put in prompts
+## Privacy
 
-## 📚 Docs
+Lenstica has no account and no telemetry. It sends only what it needs to look
+things up:
 
-- ⏳ [The cooldown](docs/cooldown.md): each package manager's setting
-- 🔍 [Lenses](docs/lenses.md): every lens in detail
-- ⚙️ [Configuration](docs/configuration.md): the settings file
-- 🖥️ [The app](docs/app.md): menu bar, window, notifications
-- 🤖 [AI agents](docs/ai-agents.md): prompts, skill, MCP server
-- 🧩 [Writing lenses](docs/writing-lenses.md): add your own
-- 🗺️ [SPEC.md](SPEC.md): architecture and roadmap
+- Names and versions of public packages, to their registries and OSV.dev
+- Versions of installed software, to their release sites, to date them
 
-## 🤝 Contributing
+It never sends:
+
+- Package names to Aikido (it downloads Aikido's malware lists whole)
+- Anything about private-registry, git or local dependencies
+- Secret values, which it never stores, logs, shows or puts in prompts
+
+## Documentation
+
+- [The cooldown](docs/cooldown.md): each package manager's setting
+- [Lenses](docs/lenses.md): every lens in detail
+- [Configuration](docs/configuration.md): the settings file
+- [The app](docs/app.md): menu bar, window and notifications
+- [AI agents](docs/ai-agents.md): prompts, skill and MCP server
+- [Writing lenses](docs/writing-lenses.md): how to add your own
+- [SPEC.md](SPEC.md): architecture and roadmap
+
+## Contributing
 
 Issues and pull requests are welcome. Please open an issue before a large
 change.
@@ -118,20 +142,20 @@ change.
 ```sh
 cargo test --workspace
 cargo clippy --all-targets --workspace
-HOME=$(mktemp -d) cargo run -- apply   # try changes without touching your real configs
+cargo build && HOME=$(mktemp -d) target/debug/lenstica apply   # try changes without touching your real configs
 ```
 
-- 🙈 Never print, log or store a secret value, even in tests
-- 📌 Pin new dependencies to a release at least 7 days old
-- 📝 Keep the README, `docs/` and `SPEC.md` current
+- Never print, log or store a secret value, even in tests.
+- Pin new dependencies to a release at least 7 days old.
+- Keep the README, `docs/` and `SPEC.md` up to date.
 
-## 🔐 Security
+## Security
 
-Please don't report vulnerabilities in public issues. Use
-[private vulnerability reporting](https://github.com/lenstica/lenstica/security/advisories/new)
-instead.
+Please report vulnerabilities through
+[private vulnerability reporting](https://github.com/lenstica/lenstica/security/advisories/new),
+not in public issues.
 
-## 📄 License
+## License
 
 [Apache 2.0](LICENSE), see [NOTICE](NOTICE). Icons are from
 [Lucide](https://lucide.dev) (ISC).

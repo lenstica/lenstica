@@ -19,21 +19,16 @@ CLI and your AI agent, with a remedy and often a one-click fix.
 
 ## ✨ Features
 
-- ⏳ **Cooldown everywhere**: npm, pnpm, Yarn, Bun, uv, pip, Poetry and Cargo
-  never install versions younger than 7 days, and Lenstica restores the
-  setting if something resets it
-- 📦 **Dependency audit**: too-new, vulnerable, malicious and deprecated
-  packages in every lockfile, worktree and global install
-- 🔑 **Exposed secrets**: credentials that malware running as you could steal
-  (values are never stored or shown)
-- 🤖 **AI-agent instructions**: hidden text, prompt injection and risky
-  settings in CLAUDE.md, AGENTS.md, skills, hooks and MCP configs
-- 🧰 **Software ages**: package managers, Homebrew formulae and casks, Rust
-  toolchains and Node.js that are too new
-- 🛠️ **One-click fixes**, with a backup of every file Lenstica edits
-- 🧩 **Your own lenses**: a Rust crate, any CLI that prints JSON, or gitleaks,
-  osv-scanner and trufflehog
-- 🔒 **Local first**: no account, no telemetry
+| | Feature | What it does |
+|---|---------|--------------|
+| ⏳ | **Cooldown everywhere** | npm, pnpm, Yarn, Bun, uv, pip, Poetry and Cargo never install versions younger than 7 days; Lenstica restores the setting if something resets it |
+| 📦 | **Dependency audit** | Too-new, vulnerable, malicious and deprecated packages in every lockfile, worktree and global install |
+| 🔑 | **Exposed secrets** | Credentials that malware running as you could steal (values are never stored or shown) |
+| 🤖 | **AI-agent instructions** | Hidden text, prompt injection and risky settings in CLAUDE.md, AGENTS.md, skills, hooks and MCP configs |
+| 🧰 | **Software ages** | Package managers, Homebrew formulae and casks, Rust toolchains and Node.js that are too new |
+| 🛠️ | **One-click fixes** | Fix findings from the menu or CLI, with a backup of every file Lenstica edits |
+| 🧩 | **Your own lenses** | A Rust crate, any CLI that prints JSON, or gitleaks, osv-scanner and trufflehog |
+| 🔒 | **Local first** | No account, no telemetry |
 
 ## 💡 Why a cooldown?
 

@@ -231,7 +231,12 @@ forks, Zed, Chromium browsers per profile, Firefox).
   Input Monitoring, Automation, Developer Tools, App Management, camera,
   microphone, folders…), read from the system's and the user's TCC databases
   (`sqlite3 -readonly`), which macOS opens only to apps with Full Disk
-  Access; and the system extensions an app installed (network, endpoint
+  Access. macOS 27 moved the user's database (camera, microphone, contacts,
+  folders, Automation…) into a protected system container that no other app
+  may open, even with Full Disk Access; the page says so rather than asking
+  for access that would not help, so there only the system database's grants
+  show (Full Disk Access, Accessibility, Screen Recording, Input Monitoring,
+  Developer Tools…); and the system extensions an app installed (network, endpoint
   security, driver, camera), from `systemextensionsctl list`. Each
   permission links to its pane in System Settings. A program or helper that
   holds a grant but is no app in Applications (Terminal, a Homebrew binary)

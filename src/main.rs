@@ -1103,6 +1103,11 @@ fn assets_cmd(kind: Option<assets::Kind>, json: bool) -> Result<ExitCode> {
         for e in &d.errors {
             println!("  {}", s.dim(&format!("Could not read {e}")));
         }
+        for note in &d.notes {
+            if let Some((_, text)) = assets::NOTES.iter().find(|(k, _)| k == note) {
+                println!("  {}", s.dim(text));
+            }
+        }
         if !d.blocked.is_empty() {
             println!(
                 "  {}",

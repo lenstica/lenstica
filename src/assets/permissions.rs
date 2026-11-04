@@ -74,18 +74,31 @@ const TCC_QUERY: &str = "SELECT service, client, client_type, auth_value, auth_r
 pub(super) const PRIVACY: &str = "Privacy & Security permissions";
 
 /// Every grant in both TCC databases. One macOS will not let this app read
-/// (without Full Disk Access) is noted as blocked.
+/// without Full Disk Access is noted as blocked.
+///
+/// macOS 27 moved the per-user database out of `~/Library` into a protected
+/// system container no other app may open, even with Full Disk Access; when
+/// it is not where earlier versions keep it, that is noted instead, so the
+/// window does not ask for access that would not help.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(super) fn tcc(ctx: &Ctx, found: &mut Found) -> Vec<Grant> {
     let sqlite = Path::new("/usr/bin/sqlite3");
     if !sqlite.exists() {
         return Vec::new();
     }
+    let user = home().join("Library/Application Support/com.apple.TCC/TCC.db");
+    let mut dbs = vec![PathBuf::from(
+        "/Library/Application Support/com.apple.TCC/TCC.db",
+    )];
+    match std::fs::metadata(&user) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            found.notes.push("userPermissionsHidden")
+        }
+        // There, or there but protected: sqlite3 says which.
+        _ => dbs.push(user),
+    }
     let mut out = Vec::new();
-    for db in [
-        PathBuf::from("/Library/Application Support/com.apple.TCC/TCC.db"),
-        home().join("Library/Application Support/com.apple.TCC/TCC.db"),
-    ] {
+    for db in dbs {
         let db_arg = db.to_string_lossy();
         match ctx.run(sqlite, &["-readonly", "-json", &db_arg, TCC_QUERY]) {
             Ok(o) if o.success => out.extend(parse_tcc(&o.stdout)),

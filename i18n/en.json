@@ -557,6 +557,10 @@
     "notRunning": "Not running: {names}. What they hold shows here once they are started.",
     "blocked": "macOS does not let Lenstica read {names} without Full Disk Access, so what they hold is missing here. Lenstica only reads; it changes nothing there.",
     "openFullDiskAccess": "Open Full Disk Access settings",
+    "openPrivacy": "Open Privacy & Security",
+    "notes": {
+      "userPermissionsHidden": "macOS keeps the permissions you give apps yourself (camera, microphone, contacts, photos, folders, Automation and the like) where no other app can read them, even with Full Disk Access. System Settings → Privacy & Security shows them."
+    },
     "errors": {
       "one": "{count} source could not be read",
       "other": "{count} sources could not be read"

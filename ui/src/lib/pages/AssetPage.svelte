@@ -177,6 +177,14 @@
       <Button onclick={() => post({ type: "openPermissionSettings", key: "fullDiskAccess" })}>{t("assets.openFullDiskAccess")}</Button>
     </Callout>
   {/if}
+  {#each found?.notes ?? [] as note (note)}
+    <Callout class="mt-3 flex items-center justify-between gap-3">
+      <span>{tOr(`assets.notes.${note}`, "")}</span>
+      {#if model.state?.platform === "macos"}
+        <Button onclick={() => post({ type: "openPermissionSettings", key: "privacy" })}>{t("assets.openPrivacy")}</Button>
+      {/if}
+    </Callout>
+  {/each}
   {#if found?.errors.length}
     <div class="mt-3">
       <Disclosure summary={t("assets.errors", { count: found.errors.length })}>

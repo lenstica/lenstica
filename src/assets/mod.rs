@@ -568,6 +568,8 @@ pub struct Discovery {
     /// Sources macOS keeps from apps without Full Disk Access (browser
     /// profiles, other apps' data), so what they hold is missing.
     pub blocked: Vec<String>,
+    /// Keys of [`NOTES`] that apply.
+    pub notes: Vec<&'static str>,
     pub seconds: f64,
 }
 
@@ -597,6 +599,7 @@ impl Discovery {
             "notRunning": self.not_running,
             "errors": self.errors,
             "blocked": self.blocked,
+            "notes": self.notes,
         })
     }
 }
@@ -608,6 +611,7 @@ struct Found {
     not_running: Vec<String>,
     errors: Vec<String>,
     blocked: Vec<String>,
+    notes: Vec<&'static str>,
 }
 
 impl Found {
@@ -636,14 +640,22 @@ impl Found {
     }
 }
 
-/// Whether this app may read what macOS protects. Checked on a folder only
-/// Full Disk Access opens, which fails quietly without it; other apps'
+/// Whether this app may read what macOS protects. Checked on the system's
+/// TCC database, which every macOS keeps in the same place and which only
+/// Full Disk Access opens (quietly failing without it); other apps'
 /// sandboxes are only read with it, since reading them otherwise makes macOS
 /// ask the user.
 fn full_disk_access() -> bool {
     !cfg!(target_os = "macos")
-        || std::fs::read_dir(home().join("Library/Application Support/com.apple.TCC")).is_ok()
+        || std::fs::File::open("/Library/Application Support/com.apple.TCC/TCC.db").is_ok()
 }
+
+/// Things worth knowing about what a look could not include, by key, with
+/// their English text (the window translates them under `assets.notes`).
+pub const NOTES: &[(&str, &str)] = &[(
+    "userPermissionsHidden",
+    "macOS keeps the permissions you give apps yourself (camera, microphone, contacts, photos, folders, Automation and the like) where no other app can read them, even with Full Disk Access. System Settings → Privacy & Security shows them.",
+)];
 
 /// How a discovery runs tools: the search path a login agent needs, and a
 /// short time limit, since a tool that hangs must not hold up the window.
@@ -705,6 +717,7 @@ pub fn discover(cfg: &Config, kinds: &[Kind]) -> Vec<Discovery> {
                     not_running: Vec::new(),
                     errors: vec!["the search stopped unexpectedly".to_string()],
                     blocked: Vec::new(),
+                    notes: Vec::new(),
                     seconds: 0.0,
                 })
             })
@@ -723,6 +736,7 @@ fn discover_one(ctx: &Ctx, kind: Kind) -> Discovery {
         not_running,
         errors,
         blocked,
+        notes,
     } = found;
     // Those without a source ("Other", "No remote") last.
     assets.sort_by(|a, b| {
@@ -739,6 +753,7 @@ fn discover_one(ctx: &Ctx, kind: Kind) -> Discovery {
         not_running,
         errors,
         blocked,
+        notes,
         seconds: started.elapsed().as_secs_f64(),
     }
 }
@@ -1025,6 +1040,13 @@ mod tests {
             assert!(has(&format!("/assets/status/{}", s.label())));
         }
         assert!(has("/assets/kinds/repositories/noSource") && has("/assets/noSource"));
+        for (key, english) in NOTES {
+            assert_eq!(
+                en.pointer(&format!("/assets/notes/{key}"))
+                    .and_then(|v| v.as_str()),
+                Some(*english)
+            );
+        }
         for (key, english, _, _) in PERMISSIONS {
             assert_eq!(
                 en.pointer(&format!("/assets/permissions/{key}/title"))

@@ -169,5 +169,7 @@ export interface Discovery {
   errors: string[];
   /** Sources macOS keeps from apps without Full Disk Access. */
   blocked: string[];
+  /** What a look could not include, by key (`assets.notes`). */
+  notes: string[];
   seconds: number;
 }

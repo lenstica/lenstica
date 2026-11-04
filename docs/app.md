@@ -51,7 +51,9 @@ the top bar, beside the logo, and dragging the bar moves the window
   Automation, camera, microphone and folders, and its system extensions,
   each with a button to the pane that changes it; programs that hold one,
   such as Terminal or a Homebrew tool, are listed too; filter to the apps
-  with elevated permissions. Reading them needs Full Disk Access. On Linux,
+  with elevated permissions. Reading them needs Full Disk Access; on macOS 27
+  the permissions you give apps yourself (camera, microphone, folders,
+  Automation…) are kept where no app can read them, which the page says. On Linux,
   each Flatpak's sandbox permissions with your overrides, and AppImages,
   which have no sandbox), **Containers** (running and stopped, in
   Docker Desktop, OrbStack, Colima, Rancher Desktop or Podman), **Virtual

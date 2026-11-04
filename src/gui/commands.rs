@@ -223,8 +223,13 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
         // The System Settings pane where a permission is changed (Full Disk Access, Camera…).
         "openPermissionSettings" => {
             let key = str_field(msg, "key")?;
-            let pane = crate::assets::settings_pane(key)
-                .with_context(|| format!("no System Settings pane for `{key}`"))?;
+            // `privacy`: Privacy & Security itself.
+            let pane = if key == "privacy" {
+                "Privacy"
+            } else {
+                crate::assets::settings_pane(key)
+                    .with_context(|| format!("no System Settings pane for `{key}`"))?
+            };
             system::open_settings_pane(pane)?;
         }
         "openConfig" => system::open(&config::ensure_exists()?)?,

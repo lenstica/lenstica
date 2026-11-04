@@ -127,6 +127,21 @@ export interface Listening {
 /** A kind of asset: a page under Assets in the sidebar (src/assets/mod.rs). */
 export type AssetKind = "identities" | "repositories" | "applications" | "containers" | "virtual-machines" | "extensions";
 
+/** What an app may do beyond its own files, or was refused (src/assets/mod.rs `PERMISSIONS`). */
+export interface Permission {
+  key: string;
+  /** Rust's English, for a key the window has no translation for. */
+  label: string;
+  /** Reaches beyond the app: every file, the screen, the keyboard, other apps, the system. */
+  elevated: boolean;
+  allowed: boolean;
+  by?: "user" | "organization" | "system";
+  /** What it applies to: the app Automation controls, a Flatpak's folders. */
+  detail?: string;
+  /** System Settings has a pane for it. */
+  settings: boolean;
+}
+
 /** One thing on this machine: an account, a repository, an app, a container… */
 export interface Asset {
   /** Unique within its kind. */
@@ -139,6 +154,8 @@ export interface Asset {
   /** `label` is Rust's English, for a key the window has no translation for. */
   facts: { key: string; label: string; value: string }[];
   tags: { key: string; label: string }[];
+  /** Applications only, allowed first. */
+  permissions?: Permission[];
 }
 
 /** What one look for a kind of asset found. */

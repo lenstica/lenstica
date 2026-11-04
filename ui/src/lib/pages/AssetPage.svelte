@@ -3,9 +3,19 @@
   // where it comes from and searchable, with each one's details and the
   // findings about it. Looked for afresh each time the page opens.
   import { tick } from "svelte";
-  import { File, FolderOpen, ListFilter, RefreshCw, Search } from "@lucide/svelte";
+  import { File, FolderOpen, ListFilter, RefreshCw, Search, Settings2, Shield, ShieldAlert } from "@lucide/svelte";
   import { post } from "../api";
-  import { factLabel, kindDescription, kindIcon, kindTitle, sourceTitle, tagLabel } from "../assets";
+  import {
+    factLabel,
+    kindDescription,
+    kindIcon,
+    kindTitle,
+    permissionAbout,
+    permissionSummary,
+    permissionTitle,
+    sourceTitle,
+    tagLabel,
+  } from "../assets";
   import Button from "../components/Button.svelte";
   import Callout from "../components/Callout.svelte";
   import Card from "../components/Card.svelte";
@@ -13,6 +23,7 @@
   import Disclosure from "../components/Disclosure.svelte";
   import Empty from "../components/Empty.svelte";
   import Eyebrow from "../components/Eyebrow.svelte";
+  import IconButton from "../components/IconButton.svelte";
   import ListRow from "../components/ListRow.svelte";
   import Page from "../components/Page.svelte";
   import PageHeader from "../components/PageHeader.svelte";
@@ -22,7 +33,7 @@
   import TextField from "../components/TextField.svelte";
   import { ago, t, tOr } from "../i18n/index.svelte";
   import { model, norm, rank, SEVERITIES } from "../model.svelte";
-  import type { Asset, AssetKind, Item } from "../types";
+  import type { Asset, AssetKind, Item, Permission } from "../types";
 
   let { kind }: { kind: AssetKind } = $props();
 
@@ -39,6 +50,8 @@
   const opens = $derived(kind === "identities" || kind === "repositories" || kind === "virtual-machines");
 
   let source = $state<string | null>(null);
+  /** Only apps with an elevated permission, or with any. */
+  let holding = $state<"elevated" | "any" | null>(null);
   let query = $state("");
   let selected = $state<string | null>(null);
   let list: HTMLDivElement | undefined = $state();
@@ -49,12 +62,21 @@
   const all = $derived(found?.assets ?? []);
   // Rust sorts by source, those without one last.
   const sources = $derived([...new Set(all.map((a) => a.source))]);
+  const allowed = (a: Asset) => (a.permissions ?? []).filter((p) => p.allowed);
+  const holds = (a: Asset, which: "elevated" | "any") => allowed(a).some((p) => which === "any" || p.elevated);
+  const elevatedCount = $derived(all.filter((a) => holds(a, "elevated")).length);
+  const anyCount = $derived(all.filter((a) => holds(a, "any")).length);
   const shown = $derived.by(() => {
     const q = query.trim().toLowerCase();
     return all.filter(
       (a) =>
         (source === null || a.source === source) &&
-        (!q || [a.name, a.source, ...a.facts.map((f) => f.value), ...a.tags.map(tagLabel)].join("\n").toLowerCase().includes(q)),
+        (holding === null || holds(a, holding)) &&
+        (!q ||
+          [a.name, a.source, ...a.facts.map((f) => f.value), ...a.tags.map(tagLabel), ...allowed(a).map(permissionTitle)]
+            .join("\n")
+            .toLowerCase()
+            .includes(q)),
     );
   });
   const groups = $derived(
@@ -110,6 +132,26 @@
   {/if}
 {/snippet}
 
+<!-- One permission an app holds: what it is, what it allows, who set it, and where to change it. -->
+{#snippet permission(p: Permission)}
+  <div class="flex items-start gap-3 border-b border-line px-4 py-2.5 last:border-0">
+    <span class="pt-0.5 {p.elevated ? 'text-t-high' : 'text-faint'}">
+      {#if p.elevated}<ShieldAlert size={15} aria-hidden="true" />{:else}<Shield size={15} aria-hidden="true" />{/if}
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="text-base font-medium">
+        {permissionTitle(p)}{#if p.detail}<span class="font-normal text-muted"> · {p.detail}</span>{/if}
+        {#if p.elevated}<span class="sr-only">, {t("assets.tags.elevated")}</span>{/if}
+      </div>
+      <div class="text-xs text-muted">{permissionAbout(p)}</div>
+      {#if p.by === "organization" || p.by === "system"}<div class="mt-0.5 text-xs text-faint">{t(`assets.by.${p.by}`)}</div>{/if}
+    </div>
+    {#if p.settings && model.state?.platform === "macos"}
+      <IconButton icon={Settings2} label={t("assets.changeInSettings")} onclick={() => post({ type: "openPermissionSettings", key: p.key })} />
+    {/if}
+  </div>
+{/snippet}
+
 {#snippet meta()}
   <span class="font-medium">{found ? t("assets.count", { count: all.length }) : t("assets.looking")}</span>
   {#if running}<span class="text-faint">· {t("assets.running", { count: running })}</span>{/if}
@@ -132,7 +174,7 @@
   {#if found?.blocked.length}
     <Callout class="mt-3 flex items-center justify-between gap-3">
       <span>{t("assets.blocked", { names: found.blocked.join(", ") })}</span>
-      <Button onclick={() => post({ type: "openFullDiskAccess" })}>{t("assets.openFullDiskAccess")}</Button>
+      <Button onclick={() => post({ type: "openPermissionSettings", key: "fullDiskAccess" })}>{t("assets.openFullDiskAccess")}</Button>
     </Callout>
   {/if}
   {#if found?.errors.length}
@@ -159,15 +201,28 @@
     {:else if !all.length}
       <Card><Empty title={tOr(`assets.kinds.${kind}.empty`, t("assets.noMatchTitle"))} /></Card>
     {:else}
-      {#if sources.length > 1}
+      {#if sources.length > 1 || anyCount}
         <div class="mb-3 flex flex-wrap items-center gap-2">
           <ListFilter size={15} class="text-faint" aria-hidden="true" />
           <Chip selected={source === null} count={all.length} onclick={() => (source = null)}>{t("assets.all")}</Chip>
-          {#each sources as s (s)}
-            <Chip selected={source === s} count={all.filter((a) => a.source === s).length} onclick={() => (source = source === s ? null : s)}>
-              {sourceTitle(kind, s)}
+          {#if sources.length > 1}
+            {#each sources as s (s)}
+              <Chip selected={source === s} count={all.filter((a) => a.source === s).length} onclick={() => (source = source === s ? null : s)}>
+                {sourceTitle(kind, s)}
+              </Chip>
+            {/each}
+          {/if}
+          {#if anyCount}
+            <span class="mx-1 h-5 w-px bg-line" aria-hidden="true"></span>
+            {#if elevatedCount}
+              <Chip selected={holding === "elevated"} count={elevatedCount} onclick={() => (holding = holding === "elevated" ? null : "elevated")}>
+                <ShieldAlert size={14} class="text-t-high" aria-hidden="true" />{t("assets.filterElevated")}
+              </Chip>
+            {/if}
+            <Chip selected={holding === "any"} count={anyCount} onclick={() => (holding = holding === "any" ? null : "any")}>
+              <Shield size={14} aria-hidden="true" />{t("assets.filterAny")}
             </Chip>
-          {/each}
+          {/if}
         </div>
       {/if}
       <div class="mb-3 flex">
@@ -195,17 +250,28 @@
                   </div>
                   {#each g.assets as a (a.id)}
                     {@const alerts = alertsOf(a)}
+                    {@const granted = allowed(a)}
+                    {@const elevated = granted.filter((p) => p.elevated).length}
+                    {@const tags = a.tags.filter((tag) => tag.key !== "elevated")}
                     {#snippet lead()}
                       <span class="grid w-4 place-items-center pt-0.5">
                         {#if alerts.length}<SeverityIcon severity={worst(alerts)} />{:else}{@render status(a)}{/if}
                       </span>
                     {/snippet}
-                    {#snippet tags()}
-                      {#if a.tags.length}
-                        <span class="flex flex-wrap justify-end gap-1">
-                          {#each a.tags.slice(0, 2) as tag (tag.key)}<Tag>{tagLabel(tag)}</Tag>{/each}
-                        </span>
-                      {/if}
+                    {#snippet end()}
+                      <span class="flex flex-wrap items-center justify-end gap-1.5">
+                        {#each tags.slice(0, 2) as tag (tag.key)}<Tag>{tagLabel(tag)}</Tag>{/each}
+                        <!-- How many permissions it holds; in the high colour when one is elevated. -->
+                        {#if granted.length}
+                          <span
+                            class="inline-flex items-center gap-1 text-xs font-medium tabular {elevated ? 'text-t-high' : 'text-muted'}"
+                            title={t("assets.permissionsTitle", { count: granted.length })}
+                          >
+                            {#if elevated}<ShieldAlert size={13} aria-hidden="true" />{:else}<Shield size={13} aria-hidden="true" />{/if}
+                            <span aria-hidden="true">{granted.length}</span><span class="sr-only">{t("assets.permissionsTitle", { count: granted.length })}</span>
+                          </span>
+                        {/if}
+                      </span>
                     {/snippet}
                     <ListRow
                       role="option"
@@ -213,9 +279,9 @@
                       tabindex={current?.id === a.id ? 0 : -1}
                       selected={current?.id === a.id}
                       title={a.name}
-                      subtitle={summary(a)}
+                      subtitle={granted.length ? permissionSummary(granted) : summary(a)}
                       leading={lead}
-                      trailing={tags}
+                      trailing={end}
                       onclick={() => show(a.id)}
                     />
                   {/each}
@@ -242,7 +308,7 @@
               {#each current.tags as tag (tag.key)}
                 {@const note = tOr(`assets.tagNotes.${tag.key}`, "")}
                 {#if note}
-                  <Callout tone={tag.key === "excluded" ? "neutral" : "attention"} class="mt-3">{note}</Callout>
+                  <Callout tone={tag.key === "credentialsInFile" || tag.key === "allSites" ? "attention" : "neutral"} class="mt-3">{note}</Callout>
                 {/if}
               {/each}
 
@@ -253,6 +319,32 @@
                     <dd class="m-0 break-words">{f.value}</dd>
                   {/each}
                 </dl>
+              {/if}
+
+              {#if current.permissions?.length}
+                {@const on = current.permissions.filter((p) => p.allowed)}
+                {@const off = current.permissions.filter((p) => !p.allowed)}
+                <SectionHeading
+                  level={4}
+                  size="sm"
+                  title={t("assets.permissionsTitle", { count: on.length })}
+                  note={t("assets.permissionsNote")}
+                  class="mb-1 mt-6"
+                />
+                {#if on.length}
+                  <Card>{#each on as p (p.key + (p.detail ?? ""))}{@render permission(p)}{/each}</Card>
+                {/if}
+                {#if off.length}
+                  <div class="mt-2">
+                    <Disclosure summary={t("assets.turnedOff", { count: off.length })}>
+                      <ul class="m-0 mt-1.5 list-none p-0">
+                        {#each off as p (p.key + (p.detail ?? ""))}
+                          <li class="py-0.5">{permissionTitle(p)}{p.detail ? ` · ${p.detail}` : ""}</li>
+                        {/each}
+                      </ul>
+                    </Disclosure>
+                  </div>
+                {/if}
               {/if}
 
               {#if current.path}

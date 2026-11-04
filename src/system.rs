@@ -76,15 +76,25 @@ pub fn open_url(url: &str) -> Result<()> {
     spawn(cmd, url)
 }
 
-/// System Settings → Privacy & Security → Full Disk Access, where macOS lets
-/// an app read what it protects (browser profiles, other apps' data).
-pub fn open_full_disk_access() -> Result<()> {
+/// A pane of System Settings (macOS): one of Privacy & Security's
+/// (`Privacy_AllFiles`, `Privacy_Camera`…), or `LoginItems` for Login Items
+/// & Extensions. Only names from the assets' permission table come here.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub fn open_settings_pane(pane: &str) -> Result<()> {
     if !cfg!(target_os = "macos") {
-        anyhow::bail!("Full Disk Access is a macOS setting");
+        anyhow::bail!("System Settings is on macOS");
     }
+    if !pane.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        anyhow::bail!("not a settings pane: {pane}");
+    }
+    let url = if pane == "LoginItems" {
+        "x-apple.systempreferences:com.apple.LoginItems-Settings.extension".to_string()
+    } else {
+        format!("x-apple.systempreferences:com.apple.preference.security?{pane}")
+    };
     let mut cmd = Command::new("open");
-    cmd.arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles");
-    spawn(cmd, "Full Disk Access settings")
+    cmd.arg(&url);
+    spawn(cmd, "System Settings")
 }
 
 /// Open a file with the platform's default handler (a text editor on macOS).

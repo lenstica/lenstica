@@ -32,7 +32,7 @@ often a one-click fix.
 | **Exposed secrets** | Finds credentials that malware running as you could steal, without storing or showing their values |
 | **AI-agent instructions** | Flags hidden text, prompt injection and risky settings in CLAUDE.md, AGENTS.md, skills, hooks and MCP configs |
 | **Network exposure** | Shows what accepts connections and flags debuggers, databases, container ports and dev servers that other devices on your Wi-Fi can reach |
-| **Inventory** | Lists what is on your machine: signed-in accounts (names only, never keys), repositories, apps, containers, virtual machines, and editor and browser extensions, each with the findings about it |
+| **Inventory** | Lists what is on your machine: signed-in accounts (names only, never keys), repositories, apps with the permissions each holds (Full Disk Access, Accessibility, Screen Recording… on macOS; Flatpak sandboxes on Linux), containers, virtual machines, and editor and browser extensions, each with the findings about it |
 | **Software ages** | Flags package managers, Homebrew formulae and casks, Rust toolchains and Node.js releases that are too new |
 | **One-click fixes** | Fixes findings from the menu or the CLI, and backs up every file it edits |
 | **Your own lenses** | Runs your own checks: a Rust crate, any CLI that prints JSON, or gitleaks, osv-scanner and trufflehog |

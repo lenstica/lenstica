@@ -246,7 +246,7 @@
       },
       "applications": {
         "title": "Applications",
-        "description": "Installed apps, with their versions, and where each came from: the App Store, Homebrew, Apple, or somewhere else.",
+        "description": "Installed apps, with their versions, where each came from (the App Store, Homebrew, Apple or somewhere else), and what each is allowed to do: the permissions System Settings spreads over Privacy & Security, or a Linux app's sandbox.",
         "empty": "No applications found."
       },
       "containers": {
@@ -311,13 +311,236 @@
       "credentialsInFile": "Credentials in a file",
       "allSites": "All sites",
       "disabled": "Turned off",
-      "excluded": "Left out of checks"
+      "excluded": "Left out of checks",
+      "elevated": "Elevated permissions",
+      "notFound": "Not found"
     },
     "tagNotes": {
       "credentialsInFile": "A token, password or key is written in this file, where any program running as you can read it.",
       "allSites": "It can read and change every website you visit.",
-      "excluded": "Lenstica's lenses skip it (Settings → Projects)."
+      "excluded": "Lenstica's lenses skip it (Settings → Projects).",
+      "notFound": "Lenstica could not find this app or program on this Mac. It may have been removed with its permission left behind, which you can remove in System Settings, or be a helper inside another app."
     },
+    "permissions": {
+      "fullDiskAccess": {
+        "title": "Full Disk Access",
+        "about": "Can read and change every file, including other apps' data, mail, messages and browser history."
+      },
+      "accessibility": {
+        "title": "Accessibility",
+        "about": "Can see and control every app: read windows, click and type."
+      },
+      "screenRecording": {
+        "title": "Screen & System Audio Recording",
+        "about": "Can see everything on your screen and hear the sound your Mac plays."
+      },
+      "inputMonitoring": {
+        "title": "Input Monitoring",
+        "about": "Can read every key you press and every mouse movement, in every app."
+      },
+      "automation": {
+        "title": "Automation",
+        "about": "Can control another app and act in it as you."
+      },
+      "developerTools": {
+        "title": "Developer Tools",
+        "about": "Can run software that skips macOS's security checks."
+      },
+      "appManagement": {
+        "title": "App Management",
+        "about": "Can update or delete other apps."
+      },
+      "appData": {
+        "title": "Other apps' data",
+        "about": "Can read the data other apps keep in their own folders."
+      },
+      "remoteDesktop": {
+        "title": "Remote Desktop",
+        "about": "Can show and control this Mac from another computer."
+      },
+      "camera": {
+        "title": "Camera",
+        "about": "Can use the camera."
+      },
+      "microphone": {
+        "title": "Microphone",
+        "about": "Can use the microphone."
+      },
+      "contacts": {
+        "title": "Contacts",
+        "about": "Can read and change your contacts."
+      },
+      "calendars": {
+        "title": "Calendars",
+        "about": "Can read and change your calendars."
+      },
+      "reminders": {
+        "title": "Reminders",
+        "about": "Can read and change your reminders."
+      },
+      "photos": {
+        "title": "Photos",
+        "about": "Can read your photo library."
+      },
+      "desktopFolder": {
+        "title": "Desktop folder",
+        "about": "Can read and change the files on your Desktop."
+      },
+      "documentsFolder": {
+        "title": "Documents folder",
+        "about": "Can read and change the files in Documents."
+      },
+      "downloadsFolder": {
+        "title": "Downloads folder",
+        "about": "Can read and change the files in Downloads."
+      },
+      "networkVolumes": {
+        "title": "Network volumes",
+        "about": "Can read and change files on network drives."
+      },
+      "removableVolumes": {
+        "title": "Removable volumes",
+        "about": "Can read and change files on USB drives and memory cards."
+      },
+      "mediaLibrary": {
+        "title": "Media & Apple Music",
+        "about": "Can read your music and media library."
+      },
+      "speechRecognition": {
+        "title": "Speech Recognition",
+        "about": "Can send what you say to speech recognition."
+      },
+      "bluetooth": {
+        "title": "Bluetooth",
+        "about": "Can find and connect to Bluetooth devices."
+      },
+      "motion": {
+        "title": "Motion & Fitness",
+        "about": "Can read motion and fitness data."
+      },
+      "focus": {
+        "title": "Focus",
+        "about": "Can see whether a Focus is on."
+      },
+      "home": {
+        "title": "Home",
+        "about": "Can see and control your Home accessories."
+      },
+      "passkeys": {
+        "title": "Passkeys Access for Web Browsers",
+        "about": "Can use your passkeys to sign in to websites."
+      },
+      "networkExtension": {
+        "title": "Network extension",
+        "about": "Can see, filter or redirect all of this Mac's network traffic."
+      },
+      "endpointSecurity": {
+        "title": "Endpoint security extension",
+        "about": "Can watch every program, file and process on this Mac."
+      },
+      "driverExtension": {
+        "title": "Driver extension",
+        "about": "Runs a driver that talks to hardware directly."
+      },
+      "cameraExtension": {
+        "title": "Camera extension",
+        "about": "Adds a camera other apps can use."
+      },
+      "unsandboxed": {
+        "title": "Not sandboxed",
+        "about": "Runs with everything you can do: all your files, the network, your devices and other apps."
+      },
+      "allFiles": {
+        "title": "All files",
+        "about": "Can read and change every file you can, anywhere on the system."
+      },
+      "homeFolder": {
+        "title": "Home folder",
+        "about": "Can read and change everything in your home folder, including other apps' settings and keys."
+      },
+      "systemFolders": {
+        "title": "System folders",
+        "about": "Can read the operating system's own files."
+      },
+      "folders": {
+        "title": "Folders",
+        "about": "Can read or change these folders."
+      },
+      "sandboxEscape": {
+        "title": "Run commands outside the sandbox",
+        "about": "Can run any command outside its sandbox, as you."
+      },
+      "sessionBus": {
+        "title": "Every app on the session bus",
+        "about": "Can talk to every app in your desktop session."
+      },
+      "systemBus": {
+        "title": "The system bus",
+        "about": "Can talk to system services."
+      },
+      "keyring": {
+        "title": "Passwords in the keyring",
+        "about": "Can ask for the passwords stored in your keyring."
+      },
+      "sshAgent": {
+        "title": "Your SSH keys",
+        "about": "Can use your SSH keys to sign in to servers."
+      },
+      "gpgAgent": {
+        "title": "Your GPG keys",
+        "about": "Can use your GPG keys to sign and decrypt."
+      },
+      "x11": {
+        "title": "X11 display",
+        "about": "Uses X11, where an app can see other windows and send them keystrokes."
+      },
+      "allDevices": {
+        "title": "All devices",
+        "about": "Can use every device: cameras, USB devices, game controllers and more."
+      },
+      "inputDevices": {
+        "title": "Input devices",
+        "about": "Can read input devices, such as keyboards, directly."
+      },
+      "debugging": {
+        "title": "Debugging other processes",
+        "about": "Can inspect and change other processes in its sandbox."
+      },
+      "network": {
+        "title": "Network",
+        "about": "Can use the network."
+      },
+      "audio": {
+        "title": "Sound and microphone",
+        "about": "Can play sound and record from the microphone."
+      },
+      "usb": {
+        "title": "USB devices",
+        "about": "Can use USB devices."
+      },
+      "smartCards": {
+        "title": "Smart cards",
+        "about": "Can use smart cards."
+      },
+      "printing": {
+        "title": "Printing",
+        "about": "Can print."
+      }
+    },
+    "permissionsTitle": {
+      "one": "{count} permission",
+      "other": "{count} permissions"
+    },
+    "permissionsNote": "What it is allowed to do beyond its own files.",
+    "turnedOff": "Turned off ({count})",
+    "changeInSettings": "Change in System Settings",
+    "by": {
+      "user": "You allowed it",
+      "organization": "Set by your organization",
+      "system": "Set by macOS"
+    },
+    "filterElevated": "Elevated permissions",
+    "filterAny": "Any permission",
     "status": {
       "running": "Running",
       "paused": "Paused",

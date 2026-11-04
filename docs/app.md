@@ -44,8 +44,16 @@ the top bar, beside the logo, and dragging the bar moves the window
   Google Cloud, Azure, Kubernetes, Docker registries, npm, PyPI, Cargo,
   `.netrc`, Claude Code and Codex: names only, never a key, tagged when a
   credential is kept in a plain file), **Repositories** (with remote, branch
-  and worktrees), **Applications** (version, bundle id, and where each came
-  from: App Store, Homebrew, Apple), **Containers** (running and stopped, in
+  and worktrees), **Applications** (version, bundle id, where each came
+  from: App Store, Homebrew, Apple, and what each is allowed to do: on macOS,
+  the permissions System Settings spreads over Privacy & Security, such as
+  Full Disk Access, Accessibility, Screen Recording, Input Monitoring,
+  Automation, camera, microphone and folders, and its system extensions,
+  each with a button to the pane that changes it; programs that hold one,
+  such as Terminal or a Homebrew tool, are listed too; filter to the apps
+  with elevated permissions. Reading them needs Full Disk Access. On Linux,
+  each Flatpak's sandbox permissions with your overrides, and AppImages,
+  which have no sandbox), **Containers** (running and stopped, in
   Docker Desktop, OrbStack, Colima, Rancher Desktop or Podman), **Virtual
   machines** (Lima, Colima, Podman, Multipass, Tart, Parallels, VirtualBox,
   VMware Fusion, UTM, Vagrant) and **Extensions** (VS Code, Cursor, Windsurf,

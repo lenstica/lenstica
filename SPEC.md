@@ -205,8 +205,8 @@ on demand, six kinds: **identities** (git's author, SSH keys, and the accounts
 signed in to the GitHub CLI, AWS, Google Cloud, Azure, Kubernetes, Docker
 registries, npm, PyPI, Cargo, `.netrc`, Claude Code and Codex), **repositories**
 (the project picker's, with remote, branch and worktrees), **applications**
-(macOS app bundles with their source: App Store, Homebrew, Apple; Linux
-desktop entries), **containers** (Docker's current context and Podman),
+(macOS app bundles with their source: App Store, Homebrew, Apple, and their
+permissions; Linux desktop entries, Flatpaks and AppImages), **containers** (Docker's current context and Podman),
 **virtual machines** (Lima, Colima, Podman, Multipass, Tart, Parallels,
 VirtualBox, VMware Fusion, UTM, Vagrant) and **extensions** (VS Code and its
 forks, Zed, Chromium browsers per profile, Firefox).
@@ -225,6 +225,25 @@ forks, Zed, Chromium browsers per profile, Firefox).
   Access; without it the page says which sources were left out and opens the
   setting. Another app's sandbox (UTM's) is read only with Full Disk Access,
   since reading it otherwise makes macOS ask.
+
+- **Permissions per app.** On macOS, the grants Privacy & Security spreads
+  over a dozen panes (Full Disk Access, Accessibility, Screen Recording,
+  Input Monitoring, Automation, Developer Tools, App Management, camera,
+  microphone, folders…), read from the system's and the user's TCC databases
+  (`sqlite3 -readonly`), which macOS opens only to apps with Full Disk
+  Access; and the system extensions an app installed (network, endpoint
+  security, driver, camera), from `systemextensionsctl list`. Each
+  permission links to its pane in System Settings. A program or helper that
+  holds a grant but is no app in Applications (Terminal, a Homebrew binary)
+  gets an entry of its own, and one whose app is gone is tagged Not found.
+  Elevated permissions (reaching other apps, every file, the screen, the
+  keyboard, or the system) tag the app, and the page filters by them. On
+  Linux, a Flatpak's permissions are its manifest's `[Context]` and bus
+  policy with the system's and the user's overrides applied (home or every
+  file, `org.freedesktop.Flatpak` to run commands outside the sandbox, SSH
+  and GPG agents, X11, all devices…); an AppImage has no sandbox, which is
+  what it shows. Location Services keeps its list where only root can read
+  it, so it is not shown.
 
 Later, lenses can build on assets (L-5 and L-6 on extensions, L-11 on
 startup items), and the team edition can report them as inventory evidence.
@@ -648,6 +667,7 @@ Newest last. Dates are when the work landed in the local build.
 | 2026-11-03 | Window: one component set (every button and field 32px, navigation rows 36px), translatable text with a language setting, WCAG AA text colours, keyboard-navigable findings list; Lighthouse accessibility 100 on every page |
 | 2026-11-03 | Code review pass: state writes serialised (no lost or corrupt `findings.json`), menu built without holding the shared lock, no secret text in agent-lens notes or MCP URLs, OSV fix versions per advisory with real version ordering and pagination, private-registry packages kept off the network, wall-clock scheduling, safer Windows opener, pinned release workflow; shared helpers replace duplicated code |
 | 2026-11-03 | Listening-ports lens and the window's Network page: what accepts connections, and from where (this machine or the network), through the `listeners` crate; known services (debuggers, Docker API, databases) per port with their own remedies, container ports and dev servers per program, other apps informational; `[lenses.listening-ports] ignore`; `lenstica network` |
+| 2026-11-03 | Permissions per app under Assets → Applications: macOS Privacy & Security grants (both TCC databases, with Full Disk Access) and system extensions, each with a link to its System Settings pane, programs and helpers holding grants listed too, elevated ones tagged and filterable; Linux Flatpak permissions (manifest and overrides) and AppImages as unsandboxed |
 | 2026-11-03 | Assets: identities (names only), repositories, applications, containers, virtual machines and extensions, listed locally on demand (`src/assets/`), in the sidebar above the categories with a page per kind (grouped by source, searchable, each with its details and the findings about it), `lenstica assets` and the MCP tool `lenstica_assets`; folders macOS keeps from apps without Full Disk Access are named, not silently skipped |
 
 ## 10. Decisions

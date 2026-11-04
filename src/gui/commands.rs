@@ -220,7 +220,13 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             }
         }
         "openUrl" => system::open_url(str_field(msg, "url")?)?,
-        "openFullDiskAccess" => system::open_full_disk_access()?,
+        // The System Settings pane where a permission is changed (Full Disk Access, Camera…).
+        "openPermissionSettings" => {
+            let key = str_field(msg, "key")?;
+            let pane = crate::assets::settings_pane(key)
+                .with_context(|| format!("no System Settings pane for `{key}`"))?;
+            system::open_settings_pane(pane)?;
+        }
         "openConfig" => system::open(&config::ensure_exists()?)?,
         "ignorePackage" => {
             let entry = str_field(msg, "entry")?;

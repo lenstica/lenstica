@@ -12,6 +12,7 @@ mod containers;
 mod extensions;
 mod identities;
 mod machines;
+mod permissions;
 mod repositories;
 
 use std::ffi::OsString;
@@ -194,7 +195,235 @@ pub const TAGS: &[(&str, &str)] = &[
     ("allSites", "All sites"),
     ("disabled", "Turned off"),
     ("excluded", "Left out of checks"),
+    ("elevated", "Elevated permissions"),
+    ("notFound", "Not found"),
 ];
+
+/// Every permission an app can hold: its key, its English name (as System
+/// Settings or Flatpak names it; the window translates it under
+/// `assets.permissions` with a line on what it allows), whether it reaches
+/// beyond the app itself (other apps, every file, the screen, the keyboard,
+/// the system), and on macOS the System Settings pane that changes it.
+pub const PERMISSIONS: &[(&str, &str, bool, Option<&str>)] = &[
+    // macOS: Privacy & Security.
+    (
+        "fullDiskAccess",
+        "Full Disk Access",
+        true,
+        Some("Privacy_AllFiles"),
+    ),
+    (
+        "accessibility",
+        "Accessibility",
+        true,
+        Some("Privacy_Accessibility"),
+    ),
+    (
+        "screenRecording",
+        "Screen & System Audio Recording",
+        true,
+        Some("Privacy_ScreenCapture"),
+    ),
+    (
+        "inputMonitoring",
+        "Input Monitoring",
+        true,
+        Some("Privacy_ListenEvent"),
+    ),
+    ("automation", "Automation", true, Some("Privacy_Automation")),
+    (
+        "developerTools",
+        "Developer Tools",
+        true,
+        Some("Privacy_DevTools"),
+    ),
+    (
+        "appManagement",
+        "App Management",
+        true,
+        Some("Privacy_AppBundles"),
+    ),
+    ("appData", "Other apps' data", true, Some("Privacy_AppData")),
+    (
+        "remoteDesktop",
+        "Remote Desktop",
+        true,
+        Some("Privacy_RemoteDesktop"),
+    ),
+    ("camera", "Camera", false, Some("Privacy_Camera")),
+    (
+        "microphone",
+        "Microphone",
+        false,
+        Some("Privacy_Microphone"),
+    ),
+    ("contacts", "Contacts", false, Some("Privacy_Contacts")),
+    ("calendars", "Calendars", false, Some("Privacy_Calendars")),
+    ("reminders", "Reminders", false, Some("Privacy_Reminders")),
+    ("photos", "Photos", false, Some("Privacy_Photos")),
+    (
+        "desktopFolder",
+        "Desktop folder",
+        false,
+        Some("Privacy_FilesAndFolders"),
+    ),
+    (
+        "documentsFolder",
+        "Documents folder",
+        false,
+        Some("Privacy_FilesAndFolders"),
+    ),
+    (
+        "downloadsFolder",
+        "Downloads folder",
+        false,
+        Some("Privacy_FilesAndFolders"),
+    ),
+    (
+        "networkVolumes",
+        "Network volumes",
+        false,
+        Some("Privacy_FilesAndFolders"),
+    ),
+    (
+        "removableVolumes",
+        "Removable volumes",
+        false,
+        Some("Privacy_FilesAndFolders"),
+    ),
+    (
+        "mediaLibrary",
+        "Media & Apple Music",
+        false,
+        Some("Privacy_Media"),
+    ),
+    (
+        "speechRecognition",
+        "Speech Recognition",
+        false,
+        Some("Privacy_SpeechRecognition"),
+    ),
+    ("bluetooth", "Bluetooth", false, Some("Privacy_Bluetooth")),
+    ("motion", "Motion & Fitness", false, Some("Privacy_Motion")),
+    ("focus", "Focus", false, Some("Privacy_Focus")),
+    ("home", "Home", false, Some("Privacy_HomeKit")),
+    (
+        "passkeys",
+        "Passkeys Access for Web Browsers",
+        false,
+        Some("Privacy_PasskeyAccess"),
+    ),
+    // macOS: Login Items & Extensions.
+    (
+        "networkExtension",
+        "Network extension",
+        true,
+        Some("LoginItems"),
+    ),
+    (
+        "endpointSecurity",
+        "Endpoint security extension",
+        true,
+        Some("LoginItems"),
+    ),
+    (
+        "driverExtension",
+        "Driver extension",
+        true,
+        Some("LoginItems"),
+    ),
+    (
+        "cameraExtension",
+        "Camera extension",
+        false,
+        Some("LoginItems"),
+    ),
+    // Linux: what a Flatpak's sandbox lets through, and AppImages, which have none.
+    ("unsandboxed", "Not sandboxed", true, None),
+    ("allFiles", "All files", true, None),
+    ("homeFolder", "Home folder", true, None),
+    ("systemFolders", "System folders", true, None),
+    ("folders", "Folders", false, None),
+    (
+        "sandboxEscape",
+        "Run commands outside the sandbox",
+        true,
+        None,
+    ),
+    ("sessionBus", "Every app on the session bus", true, None),
+    ("systemBus", "The system bus", true, None),
+    ("keyring", "Passwords in the keyring", true, None),
+    ("sshAgent", "Your SSH keys", true, None),
+    ("gpgAgent", "Your GPG keys", true, None),
+    ("x11", "X11 display", true, None),
+    ("allDevices", "All devices", true, None),
+    ("inputDevices", "Input devices", true, None),
+    ("debugging", "Debugging other processes", true, None),
+    ("network", "Network", false, None),
+    ("audio", "Sound and microphone", false, None),
+    ("usb", "USB devices", false, None),
+    ("smartCards", "Smart cards", false, None),
+    ("printing", "Printing", false, None),
+];
+
+/// Who set a permission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SetBy {
+    User,
+    /// A management profile from an organisation.
+    Organization,
+    System,
+}
+
+/// One permission an app holds, or was refused.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Permission {
+    pub key: &'static str,
+    pub label: &'static str,
+    pub elevated: bool,
+    pub allowed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by: Option<SetBy>,
+    /// What it applies to: the app an Automation grant controls, a
+    /// Flatpak's folders, a system extension's name.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub detail: String,
+    /// Whether System Settings has a pane for it ([`settings_pane`]).
+    pub settings: bool,
+}
+
+impl Permission {
+    pub fn new(key: &'static str, allowed: bool) -> Self {
+        let found = PERMISSIONS.iter().find(|p| p.0 == key);
+        debug_assert!(found.is_some(), "unknown permission `{key}`");
+        Self {
+            key,
+            label: found.map_or("", |p| p.1),
+            elevated: found.is_some_and(|p| p.2),
+            allowed,
+            by: None,
+            detail: String::new(),
+            settings: found.is_some_and(|p| p.3.is_some()),
+        }
+    }
+
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = detail.into();
+        self
+    }
+
+    pub fn by(mut self, by: Option<SetBy>) -> Self {
+        self.by = by;
+        self
+    }
+}
+
+/// The System Settings pane for a permission (macOS), from the table only.
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
+pub fn settings_pane(key: &str) -> Option<&'static str> {
+    PERMISSIONS.iter().find(|p| p.0 == key).and_then(|p| p.3)
+}
 
 fn label(table: &[(&'static str, &'static str)], key: &str) -> &'static str {
     let found = table.iter().find(|(k, _)| *k == key).map(|(_, l)| *l);
@@ -232,6 +461,9 @@ pub struct Asset {
     pub path: Option<PathBuf>,
     pub facts: Vec<Fact>,
     pub tags: Vec<Tag>,
+    /// What an app may do beyond its own files (Applications only), allowed first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub permissions: Vec<Permission>,
 }
 
 impl Asset {
@@ -244,6 +476,7 @@ impl Asset {
             path: None,
             facts: Vec::new(),
             tags: Vec::new(),
+            permissions: Vec::new(),
         }
     }
 
@@ -288,7 +521,29 @@ impl Asset {
         self
     }
 
-    #[cfg(test)]
+    /// Add a permission (one already there for the same thing is replaced),
+    /// tagging the app when an elevated one is allowed.
+    pub fn permit(&mut self, p: Permission) {
+        self.permissions
+            .retain(|q| !(q.key == p.key && q.detail == p.detail));
+        if p.allowed && p.elevated && !self.tags.iter().any(|t| t.key == "elevated") {
+            self.tags.push(Tag {
+                key: "elevated",
+                label: label(TAGS, "elevated"),
+            });
+        }
+        self.permissions.push(p);
+        // Allowed first, elevated first, then as System Settings lists them.
+        let order = |p: &Permission| {
+            PERMISSIONS
+                .iter()
+                .position(|q| q.0 == p.key)
+                .unwrap_or(usize::MAX)
+        };
+        self.permissions
+            .sort_by_key(|p| (!p.allowed, !p.elevated, order(p), p.detail.clone()));
+    }
+
     pub fn get(&self, key: &str) -> Option<&str> {
         self.facts
             .iter()
@@ -331,6 +586,13 @@ impl Discovery {
                 "path": a.path,
                 "facts": a.facts.iter().map(|f| (f.key.to_string(), serde_json::Value::from(f.value.clone()))).collect::<serde_json::Map<_, _>>(),
                 "tags": a.tags.iter().map(|t| t.key).collect::<Vec<_>>(),
+                "permissions": a.permissions.iter().map(|p| serde_json::json!({
+                    "key": p.key,
+                    "allowed": p.allowed,
+                    "elevated": p.elevated,
+                    "by": p.by,
+                    "detail": p.detail,
+                })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
             "notRunning": self.not_running,
             "errors": self.errors,
@@ -763,6 +1025,14 @@ mod tests {
             assert!(has(&format!("/assets/status/{}", s.label())));
         }
         assert!(has("/assets/kinds/repositories/noSource") && has("/assets/noSource"));
+        for (key, english, _, _) in PERMISSIONS {
+            assert_eq!(
+                en.pointer(&format!("/assets/permissions/{key}/title"))
+                    .and_then(|v| v.as_str()),
+                Some(*english)
+            );
+            assert!(has(&format!("/assets/permissions/{key}/about")), "{key}");
+        }
     }
 
     #[test]

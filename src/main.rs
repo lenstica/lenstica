@@ -1074,6 +1074,23 @@ fn assets_cmd(kind: Option<assets::Kind>, json: bool) -> Result<ExitCode> {
                 format!("  [{}]", tags.join(", "))
             };
             println!("    {:<32} {}{}", a.name, s.dim(&about.join(" · ")), tags);
+            // What it is allowed: elevated permissions in red.
+            let allowed: Vec<String> = a
+                .permissions
+                .iter()
+                .filter(|p| p.allowed)
+                .map(|p| {
+                    let name = if p.detail.is_empty() {
+                        p.label.to_string()
+                    } else {
+                        format!("{} ({})", p.label, p.detail)
+                    };
+                    if p.elevated { s.red(&name) } else { name }
+                })
+                .collect();
+            if !allowed.is_empty() {
+                println!("      {}", allowed.join(", "));
+            }
         }
         for name in &d.not_running {
             println!(

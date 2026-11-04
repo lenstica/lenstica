@@ -3,21 +3,20 @@
   // split into what other devices can reach and what only this machine can,
   // each with the severity of the listening-ports finding that covers it.
   import { onDestroy } from "svelte";
-  import { RefreshCw } from "@lucide/svelte";
+  import { Network, RefreshCw } from "@lucide/svelte";
   import { listListening, post } from "../api";
+  import BoxRow from "../components/BoxRow.svelte";
   import Card from "../components/Card.svelte";
   import Disclosure from "../components/Disclosure.svelte";
   import Empty from "../components/Empty.svelte";
   import IconButton from "../components/IconButton.svelte";
-  import SectionHeading from "../components/SectionHeading.svelte";
-  import SeverityIcon from "../components/SeverityIcon.svelte";
+  import ListGroup from "../components/ListGroup.svelte";
   import { t } from "../i18n/index.svelte";
+  import { severityIcon, severityTint } from "../icons";
   import { model, rank } from "../model.svelte";
-  import type { Finding, Listening } from "../types";
+  import type { Listening } from "../types";
 
   const LENS = "listening-ports";
-  const ROW =
-    "grid w-full grid-cols-[20px_minmax(140px,1.2fr)_64px_minmax(160px,2fr)] items-center gap-3 border-b border-line px-4 py-2 text-left last:border-0";
 
   let list = $state<Listening[] | null>(null);
   let error = $state<string | null>(null);
@@ -56,55 +55,47 @@
   }
 </script>
 
-{#snippet cells(l: Listening, f: Finding | undefined)}
-  <span>{#if f}<SeverityIcon severity={f.severity} />{/if}</span>
-  <span class="min-w-0">
-    <span class="block truncate text-base font-medium">{l.process}</span>
-    <span class="block truncate text-xs text-faint">{t("network.pids", { pids: l.pids.join(", ") })}</span>
-  </span>
-  <span class="font-semibold tabular-nums">{l.port}</span>
-  <span class="min-w-0">
-    <span class="block truncate font-mono text-xs">{l.sockets}</span>
-    {#if l.allInterfaces}<span class="block text-xs text-faint">{t("network.everyInterface")}</span>{/if}
-  </span>
-{/snippet}
-
+<!-- A program and port: the severity of the finding about it (a click shows the finding), or a plain network icon. -->
 {#snippet row(l: Listening)}
   {@const f = findingOf(l)}
-  {#if f}
-    <button type="button" class="{ROW} hover:bg-glass" title={t("network.showFinding")} onclick={() => model.go("network", `${f.lens}|${f.key}`)}>
-      {@render cells(l, f)}
-    </button>
-  {:else}
-    <div class={ROW} title={l.path}>{@render cells(l, f)}</div>
-  {/if}
+  {@const where = [t("network.port", { port: String(l.port) }), l.sockets, l.allInterfaces ? t("network.everyInterface") : "", t("network.pids", { pids: l.pids.join(", ") })]}
+  <BoxRow
+    title={l.process}
+    subtitle={where.filter(Boolean).join(" · ")}
+    icon={f ? severityIcon(f.severity) : Network}
+    tint={f ? severityTint(f.severity) : null}
+    iconLabel={f ? t(`severity.${f.severity}`) : undefined}
+    hint={f ? t("network.showFinding") : l.path}
+    onclick={f ? () => model.go("network", `${f.lens}|${f.key}`) : undefined}
+  />
 {/snippet}
 
-{#snippet action()}<IconButton icon={RefreshCw} label={t("network.refresh")} onclick={refresh} />{/snippet}
-
-<section class="mt-8">
-  <SectionHeading
-    title={t("network.listening")}
-    aside={list ? t("network.count", { count: list.length }) : undefined}
-    note={t("network.visibility")}
-    {action}
-  />
-  {#if error}
-    <Card><Empty title={t("network.error")}>{error}</Empty></Card>
-  {:else if !list}
-    <Card><Empty title={t("network.loading")} /></Card>
-  {:else}
-    <SectionHeading level={3} size="sm" title={t("network.reachable")} aside={String(reachable.length)} note={t("network.reachableNote")} />
-    <Card>
-      {#each reachable as l (`${l.process}|${l.port}`)}{@render row(l)}{:else}<Empty title={t("network.noneReachable")} />{/each}
-    </Card>
-    <div class="mt-3">
-      <Disclosure summary={t("network.local", { count: local.length })}>
-        <p class="mb-2 mt-1.5">{t("network.localNote")}</p>
-        <Card>
-          {#each local as l (`${l.process}|${l.port}`)}{@render row(l)}{:else}<Empty title={t("network.noneLocal")} />{/each}
-        </Card>
-      </Disclosure>
-    </div>
-  {/if}
+<!-- At most a little under half the page, scrolling inside, so the findings below keep their room. -->
+<section class="mt-5 flex max-h-[42%] min-h-0 shrink flex-col" aria-label={t("network.listening")}>
+  <div class="flex items-center gap-2">
+    <h2 class="m-0 text-sm font-semibold">{t("network.listening")}</h2>
+    {#if list}<span class="text-sm text-faint">{t("network.count", { count: list.length })}</span>{/if}
+    <span class="flex-1"></span>
+    <IconButton icon={RefreshCw} label={t("network.refresh")} onclick={refresh} />
+  </div>
+  <p class="mb-2.5 mt-0 text-xs text-muted">{t("network.visibility")}</p>
+  <div class="min-h-0 overflow-auto pr-1.5">
+    {#if error}
+      <Card><Empty title={t("network.error")}>{error}</Empty></Card>
+    {:else if !list}
+      <Card><Empty title={t("network.loading")} /></Card>
+    {:else}
+      <ListGroup heading={t("network.reachable")} count={reachable.length} note={t("network.reachableNote")}>
+        {#each reachable as l (`${l.process}|${l.port}`)}{@render row(l)}{:else}<Empty title={t("network.noneReachable")} />{/each}
+      </ListGroup>
+      <div class="mt-3">
+        <Disclosure summary={t("network.local", { count: local.length })}>
+          <p class="mb-2 mt-1.5">{t("network.localNote")}</p>
+          <ListGroup>
+            {#each local as l (`${l.process}|${l.port}`)}{@render row(l)}{:else}<Empty title={t("network.noneLocal")} />{/each}
+          </ListGroup>
+        </Disclosure>
+      </div>
+    {/if}
+  </div>
 </section>

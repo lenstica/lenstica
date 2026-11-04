@@ -87,6 +87,8 @@ export interface State {
   configError: string | null;
   alertSeverity: Severity;
   settings: Record<string, any>;
+  /** The editors, terminals and file managers installed, for Settings to offer. */
+  apps: { editors: string[]; terminals: string[]; files: string[] };
   lenses: Lens[];
   autostart: boolean;
   now: string;

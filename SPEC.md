@@ -217,7 +217,7 @@ forks, Zed, Chromium browsers per profile, Firefox).
   key is kept; a token, password or private key is never kept, only that one
   is in a plain file (tag `credentialsInFile`).
 - **Not stored.** Each look is fresh: when the window opens, when an asset
-  page opens, on Look again, and from `lenstica assets` or the MCP server's
+  page opens, on Check now, and from `lenstica assets` or the MCP server's
   `lenstica_assets`.
 - **Linked to findings.** The window shows, per asset, the findings with a
   location in its file or folder (a repository: its project's findings).

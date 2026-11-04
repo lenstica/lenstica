@@ -146,25 +146,19 @@ impl Category {
 
     pub fn description(self) -> &'static str {
         match self {
-            Category::Agents => {
-                "The instructions, skills, hooks and MCP servers your coding agents load, and the permissions they run with."
-            }
-            Category::Packages => {
-                "Your dependencies and the package managers that install them: the cooldown, install scripts, known vulnerabilities and deprecations."
-            }
-            Category::Software => {
-                "Software installed on this machine and how it updates: tools and apps newer than the cooldown, and automatic updates."
-            }
+            Category::Agents => "What your coding agents load, and the permissions they run with.",
+            Category::Packages => "Your dependencies and the package managers that install them.",
+            Category::Software => "Installed tools and apps, and how they update.",
             Category::Secrets => {
-                "Credentials a malicious package running as you could read on disk, and credentials leaked into code."
+                "Credentials on disk or in code that a malicious package could read."
             }
             Category::Malware => {
-                "Known malicious packages and releases, and protection against installing them."
+                "Known malicious packages, and protection against installing them."
             }
             Category::Network => {
-                "Connections and services on this machine that others could reach or listen to."
+                "Programs on this machine that others on your network could reach."
             }
-            Category::Privacy => "Packages and tools that report on you: telemetry and tracking.",
+            Category::Privacy => "Tools that report on you: telemetry and tracking.",
         }
     }
 

@@ -33,8 +33,10 @@
   const severity = $derived(t(`severity.${s.alertSeverity}`).toLowerCase());
 </script>
 
+{#snippet meta()}<span class="text-muted">{t("overview.checked", { scope: model.scopeTitle, when: ago(lastRun, model.now) })}</span>{/snippet}
+
 <Page>
-  <PageHeader title={t("overview.title")} description={t("overview.checked", { scope: model.scopeTitle, when: ago(lastRun, model.now) })} />
+  <PageHeader title={t("overview.title")} description={t("overview.about")} {meta} />
 
   <Card class="mt-5 flex items-center gap-5 p-5">
     <div class="grid size-[56px] shrink-0 place-items-center rounded-2xl border border-rim {ok ? 'bg-glass-strong text-fg' : 'bg-attention/15 text-attention'}">

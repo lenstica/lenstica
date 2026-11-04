@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 
 use crate::paths;
 
-fn spawn(mut cmd: Command, what: &str) -> Result<()> {
+pub(crate) fn spawn(mut cmd: Command, what: &str) -> Result<()> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::null())

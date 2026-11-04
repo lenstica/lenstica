@@ -30,7 +30,9 @@ window's project picker does not change it.
 
 The sidebar has the Overview, then **Assets** (a page per kind, with how many
 there are), then one page per category, and at the bottom the project picker,
-Settings, a link to the project on GitHub and the version.
+Settings, **GitHub** with the version (Lenstica is in alpha), and **Report an
+issue**, which opens GitHub's issue forms (something is wrong, or an idea)
+with the version filled in, or a private report for a security problem.
 Above the page, the top bar has Back and Forward (⌘[ and ⌘]) and where you
 are. On macOS the window has no separate title bar: the window buttons sit in
 the top bar, beside the logo, and dragging the bar moves the window
@@ -53,30 +55,37 @@ the top bar, beside the logo, and dragging the bar moves the window
   such as Terminal or a Homebrew tool, are listed too; filter to the apps
   with elevated permissions. Reading them needs Full Disk Access; on macOS 27
   the permissions you give apps yourself (camera, microphone, folders,
-  Automation…) are kept where no app can read them, which the page says. On Linux,
+  Automation…) are kept where no app can read them, which Blind spots says. On Linux,
   each Flatpak's sandbox permissions with your overrides, and AppImages,
   which have no sandbox), **Containers** (running and stopped, in
   Docker Desktop, OrbStack, Colima, Rancher Desktop or Podman), **Virtual
   machines** (Lima, Colima, Podman, Multipass, Tart, Parallels, VirtualBox,
   VMware Fusion, UTM, Vagrant) and **Extensions** (VS Code, Cursor, Windsurf,
   VSCodium, Zed; Chrome, Brave, Edge, Arc, Vivaldi, Firefox; tagged when one
-  can read every site). Each page groups by source, filters by source and
-  text, and shows an asset's details, its file or folder (open or reveal),
-  and the findings with a location in it; a repository also shows its
-  project's findings in one click. Lenstica looks again each time a page
-  opens, and on Look again; nothing is started, changed or sent. A tool that
-  is installed but not running (Docker) is named, and so are folders macOS
-  keeps from apps without Full Disk Access (browser profiles), with a button
-  to that setting.
+  can read every site). Each page lists them in a box per source, each row
+  led by its source's icon (a warning on its corner when a finding about it
+  needs attention); filters by text, and by source (and, for apps,
+  permissions) from the Filter button; and shows an asset's details, its
+  file or folder (in your editor, file manager or a terminal), and the findings with a location in it; a
+  repository also shows its project's findings in one click. Lenstica looks again each time a page
+  opens, and on Check now; nothing is started, changed or sent. What a look
+  could not include is behind **Blind spots**, beside Check now: a tool that
+  is installed but not running (Docker), folders macOS keeps from apps
+  without Full Disk Access (browser profiles, with a button to that setting),
+  and sources that could not be read.
 - **A category** (AI agents, Packages, …): what it covers and its state; its
-  **lenses**, each with its state, summary and last run, a Run button and an
-  on/off switch (third-party lenses say what they send or install, and are off
-  until you turn them on); and its **findings**: filter by topic (Prompt
-  injection, Cooldown, Exposed…), severity and text; the details, remedy,
-  every location (open or reveal), references, and actions: fix, copy a
+  **lenses** as a line of names with their state, each opening its card:
+  summary and last run, a Run button and an on/off switch (third-party lenses
+  say what they send or install, and are off until you turn them on); and its
+  **findings**, in a box per topic (Prompt injection, Cooldown, Exposed…),
+  the most severe topic first, each row led by its severity: filter by text,
+  and by topic and severity from the Filter button; the details, remedy,
+  every location (in your editor, file manager or a terminal), references, and actions: fix, copy a
   prompt for an AI agent, ignore a package or one version of it, ignore an
   advisory, ignore a listening program or one of its ports. One button copies
   a single prompt for everything shown. A prompt is shown before it is copied.
+- Every page says what it is in one line, behind the ⓘ beside its title.
+- Asset and category pages fit the window: only their lists scroll.
 - **Network** also lists every program **listening now** for TCP
   connections: first what other devices on your network can reach (riskiest
   first, with the severity of the `listening-ports` finding that covers it;
@@ -92,8 +101,10 @@ the top bar, beside the logo, and dragging the bar moves the window
 - **Settings**: everything you would otherwise edit by hand, saved straight
   into the file with its comments kept, in sections listed beside it:
   - **General**: the cooldown, the lowest severity that needs attention, the
-    appearance, the language (see [Translating](translating.md)), and start
-    at login.
+    appearance, the language (see [Translating](translating.md)), the apps
+    that open a file (text editor), show it (file manager) and open a
+    terminal in its folder, each the system's own or one installed (any other
+    can be named in `[apps]`), and start at login.
   - **Notifications**: on or off, from which severity, whether automatic
     fixes are announced, and per lens.
   - **Package managers**: a switch per package manager (one switched off is

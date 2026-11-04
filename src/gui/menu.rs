@@ -19,7 +19,6 @@ use crate::config::Config;
 use crate::i18n::{self, t};
 use crate::icon::{self, Glyph, MenuIcon};
 use crate::lenses::{self, store::RunResult};
-use crate::system;
 
 const TRAY_ID: &str = "lenstica";
 /// Findings listed per category submenu; the window shows them all.
@@ -96,7 +95,7 @@ fn on_click(app: &AppHandle, event: MenuEvent) {
             super::show_page(app, "settings");
             Ok(())
         }
-        Some(Click::OpenFile(path)) => system::open(&path),
+        Some(Click::OpenFile(path)) => crate::apps::open(crate::apps::Role::Editor, &path),
         Some(Click::Quit) => {
             app.exit(0);
             Ok(())

@@ -406,6 +406,8 @@ fn state(app: &AppHandle) -> Value {
         "configError": config_error,
         "alertSeverity": lenses::threshold(&cfg).label(),
         "settings": cfg,
+        // The editors, terminals and file managers Settings offers.
+        "apps": crate::apps::installed(),
         "lenses": lenses,
         "autostart": autostart::installed().is_some(),
         "now": chrono::Utc::now(),

@@ -7,7 +7,8 @@
     "loading": "Loading…",
     "loadError": "The window could not load.",
     "configError": "The settings file has an error, so Lenstica is using its defaults or last good settings: {error}",
-    "openConfig": "Open settings file"
+    "openConfig": "Open settings file",
+    "about": "About {page}"
   },
   "nav": {
     "label": "Lenstica",
@@ -16,7 +17,10 @@
     "categories": "Categories",
     "settings": "Settings",
     "github": "GitHub",
-    "version": "v{version}",
+    "version": "v{version} alpha",
+    "versionTitle": "Lenstica {version} is an alpha: it will change, and some things may break.",
+    "report": "Report an issue",
+    "reportTitle": "Open a new issue on GitHub",
     "off": "Off",
     "offTitle": "No lens in this category is on",
     "needAttention": {
@@ -71,31 +75,31 @@
   "categories": {
     "agents": {
       "title": "AI agents",
-      "description": "The instructions, skills, hooks and MCP servers your coding agents load, and the permissions they run with."
+      "description": "What your coding agents load, and the permissions they run with."
     },
     "packages": {
       "title": "Packages",
-      "description": "Your dependencies and the package managers that install them: the cooldown, install scripts, known vulnerabilities and deprecations."
+      "description": "Your dependencies and the package managers that install them."
     },
     "software": {
       "title": "Software",
-      "description": "Software installed on this machine and how it updates: tools and apps newer than the cooldown, and automatic updates."
+      "description": "Installed tools and apps, and how they update."
     },
     "secrets": {
       "title": "Secrets",
-      "description": "Credentials a malicious package running as you could read on disk, and credentials leaked into code."
+      "description": "Credentials on disk or in code that a malicious package could read."
     },
     "malware": {
       "title": "Malware",
-      "description": "Known malicious packages and releases, and protection against installing them."
+      "description": "Known malicious packages, and protection against installing them."
     },
     "network": {
       "title": "Network",
-      "description": "Connections and services on this machine that others could reach or listen to."
+      "description": "Programs on this machine that others on your network could reach."
     },
     "privacy": {
       "title": "Privacy",
-      "description": "Packages and tools that report on you: telemetry and tracking."
+      "description": "Tools that report on you: telemetry and tracking."
     }
   },
   "topics": {
@@ -118,6 +122,7 @@
   },
   "overview": {
     "title": "Overview",
+    "about": "Every category at a glance, and what needs attention most.",
     "checked": "{scope} · checked {when}",
     "needAttention": {
       "one": "{count} finding needs attention",
@@ -151,11 +156,12 @@
     "lenses": "Lenses",
     "lensesOn": "{on} of {count} on",
     "findings": "Findings",
-    "shown": "{count} shown",
     "all": "All",
     "search": "Search titles, details, files…",
     "searchLabel": "Search findings",
-    "minimum": "Lowest severity shown",
+    "filterTopic": "Topic",
+    "filterSeverity": "Severity",
+    "otherTopic": "Other",
     "listLabel": "Findings",
     "copyOne": "Copy prompt for it…",
     "copyAll": "Copy prompt for all {count}…",
@@ -206,8 +212,6 @@
     "ignoreAdvisory": "Ignore {id}",
     "ignoreListenerPort": "Ignore {program} on port {port}",
     "where": "Where ({count})",
-    "open": "Open",
-    "reveal": "Reveal",
     "references": "References",
     "key": "Key: {key}"
   },
@@ -218,7 +222,7 @@
       "other": "{count} programs and ports"
     },
     "visibility": "Programs on this machine that accept TCP connections. Only programs running as you are visible; system services that run as administrator are not.",
-    "refresh": "Look again",
+    "refresh": "Check now",
     "loading": "Asking the system what is listening…",
     "error": "Could not list listening programs",
     "reachable": "Reachable from your network",
@@ -227,41 +231,64 @@
     "local": "This machine only ({count})",
     "localNote": "Bound to localhost: only programs on this machine can connect.",
     "noneLocal": "Nothing listens on localhost",
+    "port": "port {port}",
     "everyInterface": "every network interface",
     "pids": "pid {pids}",
     "showFinding": "Show its finding"
+  },
+  "open": {
+    "editor": "Editor",
+    "editorTitle": "Open in {app}",
+    "files": "Files",
+    "filesTitle": "Show in {app}",
+    "terminal": "Terminal",
+    "terminalTitle": "Open {app} in its folder"
+  },
+  "filter": {
+    "button": "Filter",
+    "clear": "Clear filters"
+  },
+  "blindSpots": {
+    "button": "Blind spots",
+    "heading": "What this list may be missing, and why",
+    "blocked": "Needs Full Disk Access",
+    "notRunning": "Not running",
+    "note": "Not included",
+    "notes": {
+      "userPermissionsHidden": "Hidden by macOS"
+    }
   },
   "assets": {
     "kinds": {
       "identities": {
         "title": "Identities",
-        "description": "The accounts this Mac can act as: your git author, SSH keys, and the accounts signed in to cloud, registry and AI tools. Lenstica shows names only, never a key or token, and notes where one is kept in a plain file that any program you run can read.",
+        "description": "The accounts and keys this Mac can act as. Names only, never a key or token.",
         "empty": "No signed-in accounts or keys found."
       },
       "repositories": {
         "title": "Repositories",
-        "description": "Every repository in the folders Lenstica searches, with its remote, branch and worktrees. Settings → Projects chooses the folders.",
+        "description": "Repositories in the folders chosen in Settings → Projects.",
         "empty": "No repositories in the folders Lenstica searches. Settings → Projects chooses them.",
         "noSource": "No remote"
       },
       "applications": {
         "title": "Applications",
-        "description": "Installed apps, with their versions, where each came from (the App Store, Homebrew, Apple or somewhere else), and what each is allowed to do: the permissions System Settings spreads over Privacy & Security, or a Linux app's sandbox.",
+        "description": "Installed apps, where each came from, and what each is allowed to do.",
         "empty": "No applications found."
       },
       "containers": {
         "title": "Containers",
-        "description": "Containers, running and stopped, in Docker Desktop, OrbStack, Colima, Rancher Desktop and Podman. Nothing is started to look.",
+        "description": "Containers, running and stopped. Nothing is started to look.",
         "empty": "No containers. Those you create with Docker or Podman show here."
       },
       "virtual-machines": {
         "title": "Virtual machines",
-        "description": "Virtual machines in Lima, Colima, Podman, Multipass, Tart, UTM, Parallels, VMware Fusion, VirtualBox and Vagrant. Nothing is started to look.",
+        "description": "Virtual machines, running and stopped. Nothing is started to look.",
         "empty": "No virtual machines."
       },
       "extensions": {
         "title": "Extensions",
-        "description": "Extensions in your editors (VS Code, Cursor, Windsurf, VSCodium, Zed) and browsers (Chrome, Brave, Edge, Arc, Vivaldi, Firefox). They run with access to your code, the pages you visit, or both.",
+        "description": "Editor and browser extensions, which can read your code or the pages you visit.",
         "empty": "No editor or browser extensions."
       }
     },
@@ -541,6 +568,8 @@
     },
     "filterElevated": "Elevated permissions",
     "filterAny": "Any permission",
+    "filterSource": "Source",
+    "filterPermissions": "Permissions",
     "status": {
       "running": "Running",
       "paused": "Paused",
@@ -551,11 +580,11 @@
       "other": "{count} found"
     },
     "running": "{count} running",
-    "looked": "Looked {ago}",
-    "looking": "Looking…",
-    "lookAgain": "Look again",
-    "notRunning": "Not running: {names}. What they hold shows here once they are started.",
-    "blocked": "macOS does not let Lenstica read {names} without Full Disk Access, so what they hold is missing here. Lenstica only reads; it changes nothing there.",
+    "looked": "Checked {ago}",
+    "looking": "Checking…",
+    "checkNow": "Check now",
+    "notRunning": "Start {names}, then Check now to list what is inside.",
+    "blocked": "macOS keeps {names} from Lenstica until it has Full Disk Access. Lenstica only reads; it changes nothing there.",
     "openFullDiskAccess": "Open Full Disk Access settings",
     "openPrivacy": "Open Privacy & Security",
     "notes": {
@@ -658,6 +687,13 @@
       "promptsNote": "How Copy Prompt for AI Agent, lenstica prompt and the MCP server write the prompts they hand to an agent. Saved in [prompts] in the settings file."
     },
     "fields": {
+      "editor": "Text editor",
+      "editorNote": "Opens a finding's file, an asset's file and the settings file.",
+      "terminal": "Terminal",
+      "terminalNote": "Opens in the folder of a finding's or an asset's file.",
+      "files": "File manager",
+      "filesNote": "Shows a finding's or an asset's file in its folder.",
+      "systemDefault": "System default",
       "minDays": "Minimum release age, in days",
       "minDaysWhy": "7 days would have kept out 8 of the 10 best-known supply-chain attacks of 2024-2025; most are caught and pulled within a week.",
       "autoApply": "Re-apply automatically when a package manager drifts or is newly installed",
@@ -700,7 +736,7 @@
       "leftAlone": "Left alone",
       "leave": "Leave {name} alone",
       "manage": "Manage {name}",
-      "lookAgain": "Look again",
+      "checkNow": "Check now",
       "looking": "Looking for repositories…",
       "couldNotList": "Could not list repositories",
       "noRepos": "No git repositories under the folders above.",

@@ -211,13 +211,18 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             lens: str_field(msg, "lens")?.to_string(),
             key: str_field(msg, "key")?.to_string(),
         }),
+        // In the editor, the file manager or a terminal, with the app picked in Settings.
         "open" => {
             let path = PathBuf::from(str_field(msg, "path")?);
-            if msg.get("reveal").and_then(Value::as_bool) == Some(true) {
-                system::reveal(&path)?;
-            } else {
-                system::open_any(&path)?;
-            }
+            let role = match msg.get("with").and_then(Value::as_str) {
+                Some(with) => crate::apps::Role::parse(with)
+                    .with_context(|| format!("cannot open with `{with}`"))?,
+                None if msg.get("reveal").and_then(Value::as_bool) == Some(true) => {
+                    crate::apps::Role::Files
+                }
+                None => crate::apps::Role::Editor,
+            };
+            crate::apps::open(role, &path)?;
         }
         "openUrl" => system::open_url(str_field(msg, "url")?)?,
         // The System Settings pane where a permission is changed (Full Disk Access, Camera…).
@@ -232,7 +237,7 @@ fn handle(app: &AppHandle, msg: &Value) -> Result<()> {
             };
             system::open_settings_pane(pane)?;
         }
-        "openConfig" => system::open(&config::ensure_exists()?)?,
+        "openConfig" => crate::apps::open(crate::apps::Role::Editor, &config::ensure_exists()?)?,
         "ignorePackage" => {
             let entry = str_field(msg, "entry")?;
             config::add_to_list(&["audit", "ignore"], entry)?;

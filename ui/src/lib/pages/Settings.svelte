@@ -19,6 +19,7 @@
   import TextField from "../components/TextField.svelte";
   import { i18n, LANGUAGES, t, type Key } from "../i18n/index.svelte";
   import { model } from "../model.svelte";
+  import { appOptions, type Role } from "../openers";
   import { sectionOf, sections } from "../sections";
   import PromptTemplates from "./PromptTemplates.svelte";
 
@@ -89,6 +90,13 @@
   ]);
   // What "System" means here: the language the window would pick from the system's.
   const systemLanguage = $derived(LANGUAGES.find((l) => l.code === i18n.systemLocale)?.name ?? "English");
+
+  // What opens a file, shows it, or opens a terminal in its folder (`[apps]`).
+  const APPS: { role: Role; label: Key; note: Key }[] = [
+    { role: "editor", label: "settings.fields.editor", note: "settings.fields.editorNote" },
+    { role: "terminal", label: "settings.fields.terminal", note: "settings.fields.terminalNote" },
+    { role: "files", label: "settings.fields.files", note: "settings.fields.filesNote" },
+  ];
 </script>
 
 <!-- One setting's control, by its type. -->
@@ -198,6 +206,16 @@
                       onchange={(v) => save(["window", "language"], v)}
                     />
                   </FieldRow>
+                  {#each APPS as app (app.role)}
+                    <FieldRow label={t(app.label)} note={t(app.note)}>
+                      <Select
+                        label={t(app.label)}
+                        value={s.settings.apps?.[app.role] ?? "system"}
+                        options={appOptions(app.role)}
+                        onchange={(v) => save(["apps", app.role], v)}
+                      />
+                    </FieldRow>
+                  {/each}
                   <FieldRow label={t("settings.fields.autostart")}>
                     <Switch checked={s.autostart} label={t("settings.fields.autostart")} onchange={(on) => post({ type: "autostart", enabled: on })} />
                   </FieldRow>
@@ -265,10 +283,10 @@
             {:else if section.id === "projects"}
               <div>
                 {@render group("look")}
-                {#snippet lookAgain()}
-                  <Button onclick={() => model.loadRepos()}><RefreshCw size={14} />{t("settings.fields.lookAgain")}</Button>
+                {#snippet checkNow()}
+                  <Button onclick={() => model.loadRepos()}><RefreshCw size={14} />{t("settings.fields.checkNow")}</Button>
                 {/snippet}
-                <SectionHeading level={3} title={t("settings.groups.repositories")} note={t("settings.groups.repositoriesNote")} action={lookAgain} class="mt-7" />
+                <SectionHeading level={3} title={t("settings.groups.repositories")} note={t("settings.groups.repositoriesNote")} action={checkNow} class="mt-7" />
                 <Card>
                   {#if model.reposStatus === "loading" && !model.repos.length}
                     <div class="px-4 py-3 text-sm text-muted" role="status">{t("settings.fields.looking")}</div>

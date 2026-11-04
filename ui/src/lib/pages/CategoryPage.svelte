@@ -1,26 +1,27 @@
 <script lang="ts">
   // One category: what it covers, its lenses (run, turn on or off), and its
-  // findings in the selected project, filtered by topic, severity and text.
+  // findings in the selected project, grouped by topic, filtered by topic,
+  // severity and text. Like an asset page, it fits the window: the lenses are
+  // a line of names, each opening its card, and only the list scrolls.
   import { tick } from "svelte";
+  import { Popover } from "bits-ui";
   import { ClipboardCopy, RefreshCw, Search } from "@lucide/svelte";
   import { post } from "../api";
+  import BoxRow from "../components/BoxRow.svelte";
   import Button from "../components/Button.svelte";
   import Card from "../components/Card.svelte";
-  import Chip from "../components/Chip.svelte";
   import Empty from "../components/Empty.svelte";
-  import ListRow from "../components/ListRow.svelte";
+  import FilterMenu, { type FilterGroup } from "../components/FilterMenu.svelte";
+  import ListGroup from "../components/ListGroup.svelte";
   import Page from "../components/Page.svelte";
   import PageHeader from "../components/PageHeader.svelte";
-  import SectionHeading from "../components/SectionHeading.svelte";
-  import Select from "../components/Select.svelte";
   import SeverityCounts from "../components/SeverityCounts.svelte";
-  import SeverityIcon from "../components/SeverityIcon.svelte";
   import StateDot from "../components/StateDot.svelte";
   import TextField from "../components/TextField.svelte";
-  import { t } from "../i18n/index.svelte";
-  import { categoryIcon } from "../icons";
+  import { ago, t } from "../i18n/index.svelte";
+  import { categoryIcon, severityIcon, severityTint } from "../icons";
   import { ALL, categoryDescription, categoryTitle, model, rank, SEVERITIES, topicTitle } from "../model.svelte";
-  import type { Category, Severity } from "../types";
+  import type { Category, Item, Lens, Severity } from "../types";
   import FindingDetail from "./FindingDetail.svelte";
   import LensCard from "./LensCard.svelte";
   import ListeningPanel from "./ListeningPanel.svelte";
@@ -52,7 +53,51 @@
         (!q || [i.title, i.detail, i.remedy, ...i.locations.map((l) => l.label)].join("\n").toLowerCase().includes(q)),
     );
   });
-  const current = $derived(shown.find((i) => i.id === selected) ?? shown[0] ?? null);
+  // By topic, the group with the most severe finding first; each group keeps the
+  // severity order. The arrow keys follow `ordered`, the list as drawn.
+  const groups = $derived.by(() => {
+    const by = new Map<string, Item[]>();
+    for (const i of shown) {
+      const k = i.topic ?? "";
+      by.set(k, [...(by.get(k) ?? []), i]);
+    }
+    const at = (k: string) => (topics.includes(k) ? topics.indexOf(k) : topics.length);
+    return [...by]
+      .map(([topic, items]) => ({ topic, items }))
+      .sort((a, b) => rank(b.items[0].severity) - rank(a.items[0].severity) || at(a.topic) - at(b.topic));
+  });
+  const ordered = $derived(groups.flatMap((g) => g.items));
+  const current = $derived(shown.find((i) => i.id === selected) ?? ordered[0] ?? null);
+  const filters = $derived.by(() => {
+    const out: FilterGroup[] = [];
+    if (topics.length)
+      out.push({
+        heading: t("category.filterTopic"),
+        value: topic || "all",
+        onchange: (v) => (topic = v === "all" ? "" : v),
+        options: [
+          { value: "all", label: t("category.all"), count: bySeverity.length },
+          ...topics.map((id) => ({ value: id, label: topicTitle(category, id), count: bySeverity.filter((i) => i.topic === id).length })),
+        ],
+      });
+    out.push({
+      heading: t("category.filterSeverity"),
+      value: minimum,
+      onchange: (v) => (minimum = v as Severity),
+      options: [...SEVERITIES].reverse().map((s) => ({
+        value: s,
+        label: t("severity.andAbove", { severity: t(`severity.${s}`) }),
+        count: items.filter((i) => rank(i.severity) >= rank(s)).length,
+        icon: severityIcon(s),
+        tint: severityTint(s),
+      })),
+    });
+    return out;
+  });
+  /** Low and above is where a page starts, so it is not called a filter. */
+  const active = $derived(
+    [topic ? topicTitle(category, topic) : "", minimum === "low" ? "" : t("severity.andAbove", { severity: t(`severity.${minimum}`) })].filter(Boolean),
+  );
   const status = $derived(model.categoryState(category.id));
   const headline = $derived(
     !on.length
@@ -71,12 +116,12 @@
 
   // The list moves with the arrow keys, Home and End; only the selected row is in the Tab order.
   function keys(e: KeyboardEvent) {
-    const at = shown.findIndex((i) => i.id === current?.id);
+    const at = ordered.findIndex((i) => i.id === current?.id);
     const to =
-      e.key === "ArrowDown" ? at + 1 : e.key === "ArrowUp" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? shown.length - 1 : null;
-    if (to === null || !shown.length) return;
+      e.key === "ArrowDown" ? at + 1 : e.key === "ArrowUp" ? at - 1 : e.key === "Home" ? 0 : e.key === "End" ? ordered.length - 1 : null;
+    if (to === null || !ordered.length) return;
     e.preventDefault();
-    show(shown[Math.max(0, Math.min(shown.length - 1, to))].id);
+    show(ordered[Math.max(0, Math.min(ordered.length - 1, to))].id);
     tick().then(() => list?.querySelector<HTMLElement>('[aria-selected="true"]')?.focus());
   }
 
@@ -93,6 +138,15 @@
       list?.querySelector<HTMLElement>('[aria-selected="true"]')?.scrollIntoView({ block: "center" });
     });
   });
+
+  /** A lens's line under its name: off, running, never run, or its last summary. */
+  function lensStatus(lens: Lens) {
+    const r = lens.result;
+    if (!lens.enabled) return t("lens.off");
+    if (lens.running) return t("lens.runningStatus");
+    if (!r) return t("lens.notRun");
+    return t("lens.status", { summary: r.error ? t("lens.failed", { error: r.error }) : r.summary, when: ago(r.ran_at, model.now), seconds: r.seconds.toFixed(1) });
+  }
 
   function copyShown() {
     const first = shown.slice(0, 50);
@@ -117,38 +171,38 @@
   </Button>
 {/snippet}
 
-<Page>
+<Page fill>
   <PageHeader {title} description={categoryDescription(category)} icon={categoryIcon(category.id)} {meta} {actions} />
 
-  <section class="mt-7">
-    <SectionHeading title={t("category.lenses")} aside={t("category.lensesOn", { on: on.length, count: lenses.length })} />
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(330px,1fr))] gap-3">
-      {#each lenses as lens (lens.id)}<LensCard {lens} />{/each}
-    </div>
+  <!-- The lenses as a line of names with their state; each opens its card to run it or turn it on or off. -->
+  <section class="mt-5 flex flex-wrap items-center gap-1.5" aria-label={t("category.lenses")}>
+    <span class="mr-1 text-sm font-semibold">{t("category.lenses")}</span>
+    <span class="mr-2 text-sm text-faint">{t("category.lensesOn", { on: on.length, count: lenses.length })}</span>
+    {#each lenses as lens (lens.id)}
+      <Popover.Root>
+        <Popover.Trigger
+          class="inline-flex h-7 max-w-64 items-center gap-1.5 rounded-full border border-line bg-panel px-2.5 text-xs font-medium shadow-card transition-colors hover:border-line-strong data-[state=open]:border-rim data-[state=open]:bg-glass-strong {lens.enabled
+            ? 'text-fg'
+            : 'text-muted'}"
+          title={lensStatus(lens)}
+        >
+          <StateDot state={model.lensState(lens)} /><span class="truncate">{lens.title}</span>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content sideOffset={6} align="start" class="z-50 w-[min(460px,calc(100vw-32px))] rounded-lg shadow-[0_16px_40px_-12px_rgb(0_0_0/0.45)] outline-none">
+            <LensCard {lens} />
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+    {/each}
   </section>
 
   {#if category.id === "network"}<ListeningPanel />{/if}
 
-  <section class="mt-8">
-    <SectionHeading title={t("category.findings")} aside={t("category.shown", { count: shown.length })} />
-    {#if topics.length}
-      <div class="mb-3 flex flex-wrap items-center gap-2">
-        <Chip selected={!topic} count={bySeverity.length} onclick={() => (topic = "")}>{t("category.all")}</Chip>
-        {#each topics as id (id)}
-          <Chip selected={topic === id} count={bySeverity.filter((i) => i.topic === id).length} onclick={() => (topic = topic === id ? "" : id)}>
-            {topicTitle(category, id)}
-          </Chip>
-        {/each}
-      </div>
-    {/if}
-    <div class="mb-3 flex flex-wrap items-center gap-2">
+  <section class="mt-5 flex min-h-0 flex-1 flex-col" aria-label={t("category.findings")}>
+    <div class="mb-3 flex gap-2">
       <TextField icon={Search} bind:value={query} type="search" aria-label={t("category.searchLabel")} placeholder={t("category.search")} class="min-w-60 flex-1" />
-      <Select
-        label={t("category.minimum")}
-        value={minimum}
-        options={SEVERITIES.map((s) => ({ value: s, label: t("severity.andAbove", { severity: t(`severity.${s}`) }) }))}
-        onchange={(v) => (minimum = v as Severity)}
-      />
+      <FilterMenu groups={filters} {active} onclear={() => ((topic = ""), (minimum = "low"))} />
       {#if shown.length}
         <Button title={t("category.copyTitle")} onclick={copyShown}>
           <ClipboardCopy size={14} />
@@ -172,25 +226,31 @@
         {/if}
       </Card>
     {:else}
-      <div class="grid h-[max(460px,calc(100vh-190px))] grid-cols-[minmax(320px,42%)_1fr] gap-3">
-        <Card class="overflow-auto">
-          <div bind:this={list} role="listbox" aria-label={t("category.listLabel")} tabindex="-1" onkeydown={keys}>
-            {#each shown as i (i.id)}
-              {@const where = i.locations.length ? i.locations[0].label + (i.locations.length > 1 ? ` (+${i.locations.length - 1})` : "") : ""}
-              {#snippet icon()}<SeverityIcon severity={i.severity} />{/snippet}
-              <ListRow
-                role="option"
-                aria-selected={current?.id === i.id}
-                tabindex={current?.id === i.id ? 0 : -1}
-                selected={current?.id === i.id}
-                title={i.title}
-                subtitle={i.lensTitle + (where ? ` · ${where}` : "")}
-                leading={icon}
-                onclick={() => show(i.id)}
-              />
+      <div class="grid min-h-[240px] flex-1 grid-cols-[minmax(320px,42%)_1fr] gap-3">
+        <div class="min-h-0 overflow-auto pr-1.5">
+          <div bind:this={list} role="listbox" aria-label={t("category.listLabel")} tabindex="-1" onkeydown={keys} class="pb-1">
+            {#each groups as g (g.topic)}
+              <ListGroup heading={g.topic ? topicTitle(category, g.topic) : groups.length > 1 ? t("category.otherTopic") : undefined} count={g.items.length}>
+                {#each g.items as i (i.id)}
+                  {@const where = i.locations.length ? i.locations[0].label + (i.locations.length > 1 ? ` (+${i.locations.length - 1})` : "") : ""}
+                  {@const on = current?.id === i.id}
+                  <BoxRow
+                    role="option"
+                    aria-selected={on}
+                    tabindex={on ? 0 : -1}
+                    selected={on}
+                    title={i.title}
+                    subtitle={i.lensTitle + (where ? ` · ${where}` : "")}
+                    icon={severityIcon(i.severity)}
+                    tint={severityTint(i.severity)}
+                    iconLabel={t(`severity.${i.severity}`)}
+                    onclick={() => show(i.id)}
+                  />
+                {/each}
+              </ListGroup>
             {/each}
           </div>
-        </Card>
+        </div>
         <Card class="overflow-auto p-5" aria-live="polite">
           {#if current}<FindingDetail item={current} {category} />{/if}
         </Card>

@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { ClipboardCopy, EyeOff, File, FolderOpen, Wrench } from "@lucide/svelte";
+  import { ClipboardCopy, EyeOff, Wrench } from "@lucide/svelte";
   import { post } from "../api";
   import Button from "../components/Button.svelte";
   import Callout from "../components/Callout.svelte";
   import CodeBlock from "../components/CodeBlock.svelte";
   import LinkButton from "../components/LinkButton.svelte";
+  import PathActions from "../components/PathActions.svelte";
   import SectionHeading from "../components/SectionHeading.svelte";
   import SeverityIcon from "../components/SeverityIcon.svelte";
   import Tag from "../components/Tag.svelte";
@@ -65,13 +66,14 @@
 
 {#if item.locations.length}
   <SectionHeading level={4} size="sm" title={t("finding.where", { count: item.locations.length })} class="mb-1 mt-5" />
-  <ul class="m-0 list-none p-0">
+  <ul class="@container m-0 list-none p-0">
     {#each item.locations as l, i (i)}
       <li class="flex items-center gap-2 border-b border-dashed border-line py-1 font-mono text-xs last:border-0">
         <span class="min-w-0 flex-1 truncate" title={l.label}>{l.label}{l.line ? `:${l.line}` : ""}</span>
         {#if l.path}
-          <Button variant="quiet" onclick={() => post({ type: "open", path: l.path })}><File size={14} />{t("finding.open")}</Button>
-          <Button variant="quiet" onclick={() => post({ type: "open", path: l.path, reveal: true })}><FolderOpen size={14} />{t("finding.reveal")}</Button>
+          <span class="flex shrink-0 font-sans">
+            <PathActions path={l.path} />
+          </span>
         {/if}
       </li>
     {/each}

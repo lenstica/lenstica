@@ -1,11 +1,12 @@
 <script lang="ts">
   // A navigation row (h-nav): the sidebar's pages, Settings' sections. Takes
   // the props of whatever it stands in for, such as a tab.
-  import type { Settings } from "@lucide/svelte";
-  import type { Snippet } from "svelte";
+  import type { Component, Snippet } from "svelte";
   import type { HTMLButtonAttributes } from "svelte/elements";
 
-  type Props = HTMLButtonAttributes & { icon: typeof Settings; label: string; active?: boolean; trailing?: Snippet };
+  // A Lucide icon, or anything drawn at the same size (the GitHub mark).
+  type NavIcon = Component<{ size?: number; strokeWidth?: number; class?: string }>;
+  type Props = HTMLButtonAttributes & { icon: NavIcon; label: string; active?: boolean; trailing?: Snippet };
   let { icon: Icon, label, active = false, trailing, ...rest }: Props = $props();
 </script>
 

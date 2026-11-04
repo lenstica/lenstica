@@ -177,6 +177,25 @@
   ::selection {
     background: var(--glass-strong);
   }
+  /* Every scroll bar is thin, whatever the system's scroll bar setting: a
+     rounded thumb inset from the edge on a clear track. */
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--fg) 22%, transparent);
+    background-clip: padding-box;
+    border: 3px solid transparent;
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: color-mix(in srgb, var(--fg) 38%, transparent);
+  }
 }
 
 @utility tabular {

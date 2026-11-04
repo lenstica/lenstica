@@ -49,6 +49,7 @@ pub struct Config {
     pub homebrew: Homebrew,
     pub software: Software,
     pub window: Window,
+    pub apps: Apps,
     pub prompts: Prompts,
     /// `[lenses.<id>]`: `enabled`, `interval_minutes`, and lens-specific keys.
     #[serde(alias = "checkers")]
@@ -127,6 +128,27 @@ impl Default for Window {
         Self {
             appearance: Appearance::System,
             language: "system".to_string(),
+        }
+    }
+}
+
+/// `[apps]`: what opens a file, shows it in a file manager, or opens a
+/// terminal in its folder. `system` is the platform's own; otherwise an app's
+/// name on macOS ("Visual Studio Code", "iTerm") or a command elsewhere ("code").
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct Apps {
+    pub editor: String,
+    pub terminal: String,
+    pub files: String,
+}
+
+impl Default for Apps {
+    fn default() -> Self {
+        Self {
+            editor: "system".to_string(),
+            terminal: "system".to_string(),
+            files: "system".to_string(),
         }
     }
 }
@@ -252,6 +274,7 @@ impl Default for Config {
             homebrew: Homebrew::default(),
             software: Software::default(),
             window: Window::default(),
+            apps: Apps::default(),
             prompts: Prompts::default(),
             lenses: Default::default(),
             external: Vec::new(),
@@ -427,6 +450,17 @@ item = ""                  # one finding in that list
 appearance = "system"
 # The window's language: "system", or a language code it speaks ("en").
 language = "system"
+
+[apps]
+# What opens a finding's file or the settings file, shows one in a file
+# manager, and opens a terminal in its folder: "system" uses the system's own
+# (a text editor, Finder or Explorer, Terminal); otherwise an app's name on
+# macOS ("Visual Studio Code", "iTerm", "Path Finder") or a command on Linux
+# and Windows ("code", "konsole", "dolphin"). Settings → General lists the
+# ones installed.
+editor = "system"
+terminal = "system"
+files = "system"
 
 # Other tools can run as lenses. Their findings appear in the menu, the
 # window and notifications like the built-in ones. `format` is `lenstica`
@@ -806,6 +840,7 @@ mod tests {
         assert!(cfg.monitor.auto_apply && cfg.monitor.notify);
         assert_eq!(cfg.scan.roots, vec!["~/Developer"]);
         assert_eq!(cfg.window.appearance, Appearance::System);
+        assert_eq!(cfg.apps.editor, "system");
         cfg.validate().unwrap();
     }
 

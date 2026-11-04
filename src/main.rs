@@ -4,6 +4,7 @@
 //! could steal. Each check is a pluggable lens (see `checks`).
 
 mod agent;
+mod apps;
 mod assets;
 mod audit;
 mod autostart;
@@ -840,7 +841,7 @@ fn edit(path: &std::path::Path) -> Result<()> {
         .ok()
         .filter(|e| !e.trim().is_empty());
     let Some(editor) = editor else {
-        return system::open(path);
+        return apps::open(apps::Role::Editor, path);
     };
     let mut parts = editor.split_whitespace();
     let program = parts.next().context("empty $EDITOR")?;

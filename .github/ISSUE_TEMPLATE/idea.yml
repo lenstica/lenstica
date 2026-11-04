@@ -1,0 +1,11 @@
+name: Idea
+description: Something Lenstica should check, do or show
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like Lenstica to do?
+      description: And what it would help you with.
+    validations:
+      required: true

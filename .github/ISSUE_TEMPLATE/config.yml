@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A security problem
+    url: https://github.com/lenstica/lenstica/security/advisories/new
+    about: Report it privately, so it can be fixed before anyone else learns of it.
